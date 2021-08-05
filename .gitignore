@@ -35,6 +35,7 @@ data/
 
 # development
 .env
+public/licenses.json
 
 # release
 electron-builder.yml

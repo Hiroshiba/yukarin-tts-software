@@ -10,9 +10,11 @@ module.exports = {
       preload: "src/electron/preload.ts",
       builderOptions: {
         extraFiles: [
+          "README_SOFTWARE.txt",
+          "README_LIBRARY.txt",
           { from: ".env.production", to: ".env" },
           {
-            from: "../voicevox_engine/run.dist/",
+            from: "../yukarin_tts_software_engine/run.dist/",
             to: "",
           },
         ],
