@@ -9,7 +9,9 @@ import {
   SHOW_OPEN_DIRECOTRY_DIALOG,
   GET_CHARACTOR_INFOS,
   GET_OSS_LICENSES,
+  GET_UPDATE_INFOS,
   CREATE_HELP_WINDOW,
+  SHOW_IMPORT_FILE_DIALOG,
 } from "./ipc";
 
 let tempDir: string;
@@ -21,6 +23,10 @@ const api: Sandbox = {
 
   getOssLicenses: async () => {
     return await ipcRenderer.invoke(GET_OSS_LICENSES);
+  },
+
+  getUpdateInfos: async () => {
+    return await ipcRenderer.invoke(GET_UPDATE_INFOS);
   },
 
   saveTempAudioFile: async ({ relativePath, buffer }) => {
@@ -38,12 +44,16 @@ const api: Sandbox = {
     return new TextDecoder().decode(buf);
   },
 
-  showSaveDialog: ({ title }) => {
-    return ipcRenderer.invoke(SHOW_SAVE_DIALOG, { title });
+  showSaveDialog: ({ title, defaultPath }) => {
+    return ipcRenderer.invoke(SHOW_SAVE_DIALOG, { title, defaultPath });
   },
 
   showOpenDirectoryDialog: ({ title }) => {
     return ipcRenderer.invoke(SHOW_OPEN_DIRECOTRY_DIALOG, { title });
+  },
+
+  showImportFileDialog: ({ title }) => {
+    return ipcRenderer.invoke(SHOW_IMPORT_FILE_DIALOG, { title });
   },
 
   writeFile: ({ filePath, buffer }) => {

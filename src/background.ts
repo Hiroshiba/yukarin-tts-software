@@ -22,8 +22,10 @@ import {
   CREATE_HELP_WINDOW,
   GET_CHARACTOR_INFOS,
   GET_OSS_LICENSES,
+  GET_UPDATE_INFOS,
   GET_TEMP_DIR,
   SHOW_OPEN_DIRECOTRY_DIALOG,
+  SHOW_IMPORT_FILE_DIALOG,
   SHOW_SAVE_DIALOG,
 } from "./electron/ipc";
 
@@ -111,6 +113,13 @@ const ossLicenses = JSON.parse(
   fs.readFileSync(path.join(__static, "licenses.json"), { encoding: "utf-8" })
 );
 
+// アップデート情報の読み込み
+const updateInfos = JSON.parse(
+  fs.readFileSync(path.join(__static, "updateInfos.json"), {
+    encoding: "utf-8",
+  })
+);
+
 // create window
 if (!isDevelopment) {
   Menu.setApplicationMenu(null);
@@ -161,10 +170,10 @@ async function createHelpWindow() {
 
   if (process.env.WEBPACK_DEV_SERVER_URL) {
     await child.loadURL(
-      (process.env.WEBPACK_DEV_SERVER_URL as string) + "#/help"
+      (process.env.WEBPACK_DEV_SERVER_URL as string) + "#/help/policy"
     );
   } else {
-    child.loadURL("app://./index.html#/help");
+    child.loadURL("app://./index.html#/help/policy");
   }
   if (isDevelopment) child.webContents.openDevTools();
 }
@@ -182,13 +191,21 @@ ipcMain.handle(GET_OSS_LICENSES, (event) => {
   return ossLicenses;
 });
 
-ipcMain.handle(SHOW_SAVE_DIALOG, (event, { title }: { title: string }) => {
-  return dialog.showSaveDialogSync(win, {
-    title,
-    filters: [{ name: "Wave File", extensions: ["wav"] }],
-    properties: ["createDirectory"],
-  });
+ipcMain.handle(GET_UPDATE_INFOS, (event) => {
+  return updateInfos;
 });
+
+ipcMain.handle(
+  SHOW_SAVE_DIALOG,
+  (event, { title, defaultPath }: { title: string; defaultPath?: string }) => {
+    return dialog.showSaveDialogSync(win, {
+      title,
+      defaultPath,
+      filters: [{ name: "Wave File", extensions: ["wav"] }],
+      properties: ["createDirectory"],
+    });
+  }
+);
 
 ipcMain.handle(
   SHOW_OPEN_DIRECOTRY_DIALOG,
@@ -196,6 +213,17 @@ ipcMain.handle(
     return dialog.showOpenDialogSync(win, {
       title,
       properties: ["openDirectory", "createDirectory"],
+    })?.[0];
+  }
+);
+
+ipcMain.handle(
+  SHOW_IMPORT_FILE_DIALOG,
+  (event, { title }: { title: string }) => {
+    return dialog.showOpenDialogSync(win, {
+      title,
+      filters: [{ name: "Text", extensions: ["txt"] }],
+      properties: ["openFile", "createDirectory"],
     })?.[0];
   }
 );
