@@ -1,56 +1,71 @@
 <template>
   <div
     class="audio-cell"
-    v-on:mouseover="mouseOverAction"
-    v-on:mouseleave="mouseLeaveAction"
+    @mouseover="mouseOverAction"
+    @mouseleave="mouseLeaveAction"
   >
-    <mcw-menu-anchor>
-      <button class="charactor-button" @click="isOpenedCharactorList = true">
-        <img
-          :src="
-            selectedCharactorInfo
-              ? getCharactorIconUrl(selectedCharactorInfo)
-              : undefined
-          "
-        />
-      </button>
-      <mcw-menu
-        v-model="isOpenedCharactorList"
-        @select="({ index }) => changeCharactorIndex(index)"
-        single-selection
-        fixed
-      >
-        <mcw-list-item
-          v-for="(charactorInfo, index) in charactorInfos"
-          :key="index"
-          ><img :src="getCharactorIconUrl(charactorInfo)" /><span>{{
-            charactorInfo.metas.name
-          }}</span></mcw-list-item
-        >
-      </mcw-menu>
-    </mcw-menu-anchor>
-    <mcw-textfield
+    <q-btn flat class="q-pa-none charactor-button" :disable="uiLocked">
+      <!-- q-imgだとdisableのタイミングで点滅する -->
+      <img :src="charactorIconUrl" />
+      <q-menu class="charactor-menu">
+        <q-list>
+          <q-item
+            v-for="(charactorInfo, index) in charactorInfos"
+            :key="index"
+            clickable
+            v-close-popup
+            active-class="selected-charactor-item"
+            :active="index === selectedCharactorInfo.metas.speaker"
+            @click="changeCharactorIndex(index)"
+          >
+            <q-item-section avatar>
+              <q-avatar rounded size="2rem">
+                <q-img
+                  no-spinner
+                  no-transition
+                  :ratio="1"
+                  :src="getCharactorIconUrl(charactorInfo)"
+                />
+              </q-avatar>
+            </q-item-section>
+            <q-item-section>{{ charactorInfo.metas.name }}</q-item-section>
+          </q-item>
+        </q-list>
+      </q-menu>
+    </q-btn>
+    <q-input
       ref="textfield"
+      filled
+      class="full-width"
+      style="height: 32px"
+      :disable="uiLocked"
       v-model="audioItem.text"
-      @change="willRemove || setAudioText($event.target.value)"
+      @change="willRemove || setAudioText($event)"
+      @paste="pasteOnAudioCell"
       @focus="setActiveAudioKey()"
-      @keydown.delete.exact="tryToRemoveCell"
+      @keydown.shift.delete.exact="removeCell"
       @keydown.prevent.up.exact="moveUpCell"
       @keydown.prevent.down.exact="moveDownCell"
-      :disabled="uiLocked"
-    />
-    <mcw-icon-button
-      v-show="hoverFlag"
-      @click="removeCell"
-      class="delete-button"
+      @keydown.shift.enter.exact="addCellBellow"
+      @keyup.escape.exact="blurCell"
+      @mouseup.right="onRightClickTextField"
     >
-      <mcw-material-icon icon="delete_outline" />
-    </mcw-icon-button>
+      <template #after v-if="hoverFlag && deleteButtonEnable">
+        <q-btn
+          round
+          flat
+          icon="delete_outline"
+          size="0.8rem"
+          :disable="uiLocked"
+          @click="removeCell"
+        />
+      </template>
+    </q-input>
   </div>
 </template>
 
 <script lang="ts">
-import { Component, computed, defineComponent, onMounted, ref } from "vue";
+import { computed, defineComponent, onMounted, ref } from "vue";
 import { useStore } from "@/store";
 import {
   FETCH_ACCENT_PHRASES,
@@ -60,13 +75,18 @@ import {
   SET_ACTIVE_AUDIO_KEY,
   SET_AUDIO_TEXT,
   CHANGE_CHARACTOR_INDEX,
+  REGISTER_AUDIO_ITEM,
   PLAY_AUDIO,
   STOP_AUDIO,
   REMOVE_AUDIO_ITEM,
   IS_ACTIVE,
+  PUT_TEXTS,
+  OPEN_TEXT_EDIT_CONTEXT_MENU,
 } from "@/store/audio";
+import { AudioItem } from "@/store/type";
 import { UI_LOCKED } from "@/store/ui";
 import { CharactorInfo } from "@/type/preload";
+import { QInput } from "quasar";
 
 export default defineComponent({
   name: "AudioCell",
@@ -79,7 +99,7 @@ export default defineComponent({
 
   setup(props, { emit }) {
     const store = useStore();
-    const charactorInfos = computed(() => store.state.charactorInfos!);
+    const charactorInfos = computed(() => store.state.charactorInfos);
     const audioItem = computed(() => store.state.audioItems[props.audioKey]);
     const nowPlaying = computed(
       () => store.state.audioStates[props.audioKey].nowPlaying
@@ -94,17 +114,14 @@ export default defineComponent({
     );
 
     const selectedCharactorInfo = computed(() =>
-      audioItem.value.charactorIndex !== undefined
+      charactorInfos.value != undefined &&
+      audioItem.value.charactorIndex != undefined
         ? charactorInfos.value[audioItem.value.charactorIndex]
         : undefined
     );
-    const selectorSpeakers = computed(() =>
-      charactorInfos.value.map((charactorInfo, charactorIndex) => {
-        return {
-          text: "JVS" + charactorInfo.metas.name,
-          value: charactorIndex,
-        };
-      })
+
+    const charactorIconUrl = computed(() =>
+      URL.createObjectURL(selectedCharactorInfo.value?.iconBlob)
     );
 
     // TODO: change audio textにしてvuexに載せ替える
@@ -137,6 +154,33 @@ export default defineComponent({
       store.dispatch(STOP_AUDIO, { audioKey: props.audioKey });
     };
 
+    // コピペしたときに句点と改行で区切る
+    const pasteOnAudioCell = async (event: ClipboardEvent) => {
+      if (event.clipboardData) {
+        const texts = event.clipboardData
+          .getData("text/plain")
+          .split(/[。\n\r]/);
+
+        if (texts.length > 1) {
+          event.preventDefault();
+          blurCell(); // フォーカスを外して編集中のテキスト内容を確定させる
+
+          const prevAudioKey = props.audioKey;
+          if (audioItem.value.text == "") {
+            const text = texts.shift();
+            if (text == undefined) return;
+            setAudioText(text);
+          }
+
+          store.dispatch(PUT_TEXTS, {
+            texts,
+            charactorIndex: audioItem.value.charactorIndex,
+            prevAudioKey,
+          });
+        }
+      }
+    };
+
     // 選択されている
     const isActive = computed(() => store.getters[IS_ACTIVE](props.audioKey));
 
@@ -158,36 +202,56 @@ export default defineComponent({
     // 消去
     const willRemove = ref(false);
     const removeCell = async () => {
-      // フォーカスを外したりREMOVEしたりすると、
-      // テキストフィールドのchangeイベントが非同期に飛んでundefinedエラーになる
-      // エラー防止のためにまずwillRemoveフラグを建てる
-      willRemove.value = true;
-
+      // 1つだけの時は削除せず
       if (audioKeys.value.length > 1) {
+        // フォーカスを外したりREMOVEしたりすると、
+        // テキストフィールドのchangeイベントが非同期に飛んでundefinedエラーになる
+        // エラー防止のためにまずwillRemoveフラグを建てる
+        willRemove.value = true;
+
         const index = audioKeys.value.indexOf(props.audioKey);
         if (index > 0) {
           emit("focusCell", { audioKey: audioKeys.value[index - 1] });
         } else {
           emit("focusCell", { audioKey: audioKeys.value[index + 1] });
         }
-      }
 
-      store.dispatch(REMOVE_AUDIO_ITEM, { audioKey: props.audioKey });
+        store.dispatch(REMOVE_AUDIO_ITEM, { audioKey: props.audioKey });
+      }
     };
 
-    // テキストが空白なら消去
-    const tryToRemoveCell = async (e: Event) => {
-      if (audioItem.value.text.length > 0) {
-        return;
+    // 削除ボタンの有効／無効判定
+    const deleteButtonEnable = computed(() => {
+      return 1 < audioKeys.value.length;
+    });
+
+    // テキスト編集エリアの右クリック
+    const onRightClickTextField = () => {
+      store.dispatch(OPEN_TEXT_EDIT_CONTEXT_MENU);
+    };
+
+    // 下にセルを追加
+    const addCellBellow = async () => {
+      const audioItem: AudioItem = { text: "", charactorIndex: 0 };
+      await store.dispatch(REGISTER_AUDIO_ITEM, {
+        audioItem,
+        prevAudioKey: props.audioKey,
+      });
+      moveDownCell();
+    };
+
+    // blur cell on pressing escape key
+    const blurCell = () => {
+      if (document.activeElement instanceof HTMLInputElement) {
+        document.activeElement.blur();
       }
-      e.preventDefault();
-      removeCell();
     };
 
     // フォーカス
-    const textfield = ref<Component | any>();
+    const textfield = ref<QInput>();
     const focusTextField = () => {
-      textfield.value!.focus();
+      if (textfield.value == undefined) return;
+      textfield.value.focus();
     };
 
     // キャラクター選択
@@ -198,6 +262,7 @@ export default defineComponent({
         URL.createObjectURL(charactorInfo.iconBlob)
     );
 
+    // ホバー
     const hoverFlag = ref(false);
 
     const mouseOverAction = () => {
@@ -210,17 +275,20 @@ export default defineComponent({
 
     // 初期化
     onMounted(() => {
-      store.dispatch(FETCH_AUDIO_QUERY, { audioKey: props.audioKey });
+      if (audioItem.value.query == undefined) {
+        store.dispatch(FETCH_AUDIO_QUERY, { audioKey: props.audioKey });
+      }
     });
 
     return {
       charactorInfos,
       audioItem,
+      deleteButtonEnable,
       uiLocked,
       nowPlaying,
       nowGenerating,
       selectedCharactorInfo,
-      selectorSpeakers,
+      charactorIconUrl,
       setAudioText,
       changeCharactorIndex,
       setActiveAudioKey,
@@ -229,12 +297,15 @@ export default defineComponent({
       stop,
       willRemove,
       removeCell,
-      tryToRemoveCell,
+      addCellBellow,
       isActive,
       moveUpCell,
       moveDownCell,
+      pasteOnAudioCell,
+      onRightClickTextField,
       textfield,
       focusTextField,
+      blurCell,
       isOpenedCharactorList,
       getCharactorIconUrl,
       hoverFlag,
@@ -248,50 +319,45 @@ export default defineComponent({
 <style lang="scss">
 @use '@/styles' as global;
 
-@use "@material/icon-button/mixins" as icon-button;
-
 .audio-cell {
   display: flex;
   margin: 1rem 1rem;
   gap: 0px 1rem;
   .charactor-button {
-    border: solid 1.5px;
+    border: solid 1px;
     border-color: global.$primary;
-    padding: 0;
-    margin: 0;
-    background: none;
     font-size: 0;
-    line-height: 0;
-    overflow: visible;
-    cursor: pointer;
     img {
       width: 2rem;
       height: 2rem;
       object-fit: scale-down;
     }
   }
-  .mdc-list-item__text {
-    height: 100%;
-    img {
-      height: 100%;
-    }
-  }
-  .textfield-container {
-    flex: auto;
-    label {
-      width: 100%;
-      height: 2rem !important;
-      background-color: transparent !important;
-      .mdc-line-ripple {
-        &::before,
-        &::after {
-          border-bottom-color: global.$primary !important;
-        }
+  .q-input {
+    .q-field__control {
+      height: 2rem;
+      background: none;
+      border-bottom: 1px solid global.$primary;
+      &::before {
+        border-bottom: none;
       }
     }
+    .q-field__after {
+      height: 2rem;
+      padding-left: 5px;
+    }
+    &.q-field--filled.q-field--highlighted .q-field__control:before {
+      background-color: #0001;
+    }
   }
-  .delete-button {
-    @include icon-button.density(-3); // -3は丁度いい高さになるマジックナンバー
+}
+
+.charactor-menu {
+  .q-item {
+    color: global.$secondary;
+  }
+  .selected-charactor-item {
+    background-color: rgba(global.$primary, 0.2);
   }
 }
 </style>

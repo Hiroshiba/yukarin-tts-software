@@ -13,21 +13,21 @@ import {
   dialog,
   Menu,
   shell,
+  nativeTheme,
 } from "electron";
 import { createProtocol } from "vue-cli-plugin-electron-builder/lib";
 import installExtension, { VUEJS_DEVTOOLS } from "electron-devtools-installer";
 
 import path from "path";
+import { textEditContextMenu } from "./electron/contextMenu";
+import { MenuBuilder } from "./electron/menu";
 import {
-  CREATE_HELP_WINDOW,
-  GET_CHARACTOR_INFOS,
-  GET_OSS_LICENSES,
-  GET_UPDATE_INFOS,
-  GET_TEMP_DIR,
-  SHOW_OPEN_DIRECOTRY_DIALOG,
-  SHOW_IMPORT_FILE_DIALOG,
-  SHOW_SAVE_DIALOG,
+  GENERATE_AND_SAVE_ALL_AUDIO,
+  IMPORT_FROM_FILE,
+  LOAD_PROJECT_FILE,
+  SAVE_PROJECT_FILE,
 } from "./electron/ipc";
+import { hasSupportedGpu } from "./electron/device";
 
 import fs from "fs";
 import { CharactorInfo } from "./type/preload";
@@ -56,26 +56,32 @@ const store = new Store({
 // engine
 let willQuitEngine = false;
 let engineProcess: ChildProcess;
-function runEngine() {
+async function runEngine() {
+  // 最初のエンジンモード
   if (!store.has("useGpu")) {
-    const useGpu =
-      dialog.showMessageBoxSync(win, {
-        message: "エンジンをCPUモード・GPUモードどちらで起動しますか？",
-        detail:
-          "GPUモードの利用には、メモリが3GB以上あるNVIDIA製GPUが必要です。",
-        title: "エンジンの起動モード選択",
-        type: "question",
-        buttons: ["CPUモード", "GPUモード"],
-      }) == 1;
-    store.set("useGpu", useGpu);
+    const hasGpu = await hasSupportedGpu();
+    store.set("useGpu", hasGpu);
+
+    dialog.showMessageBox(win, {
+      message: `音声合成エンジンを${
+        hasGpu ? "GPU" : "CPU"
+      }モードで起動しました`,
+      detail:
+        "エンジンの起動モードは、画面上部の「エンジン」メニューから変更できます。",
+      title: "エンジンの起動モード",
+      type: "info",
+    });
   }
 
-  const args = store.get("useGpu") ? ["--use_gpu"] : null;
+  menu.setActiveLaunchMode(store.get("useGpu", false) as boolean);
 
+  // エンジンプロセスの起動
+  const enginePath = process.env.ENGINE_PATH ?? "run.exe";
+  const args = store.get("useGpu") ? ["--use_gpu"] : null;
   engineProcess = execFile(
-    process.env.ENGINE_PATH!,
+    enginePath,
     args,
-    { cwd: path.dirname(process.env.ENGINE_PATH!) },
+    { cwd: path.dirname(enginePath) },
     () => {
       if (!willQuitEngine) {
         dialog.showErrorBox(
@@ -120,11 +126,60 @@ const updateInfos = JSON.parse(
   })
 );
 
+// initialize menu
+const menu = MenuBuilder()
+  .configure(isDevelopment)
+  .setOnLaunchModeItemClicked(async (useGpu) => {
+    if ((store.get("useGpu", false) as boolean) == useGpu) {
+      return;
+    }
+
+    let isChangeable = true;
+
+    if (useGpu) {
+      const isAvaiableGPUMode = await hasSupportedGpu();
+      if (!isAvaiableGPUMode) {
+        const response = dialog.showMessageBoxSync(win, {
+          message: "対応するGPUデバイスが見つかりません",
+          detail:
+            "GPUモードの利用には、メモリが3GB以上あるNVIDIA製GPUが必要です。\nこのままGPUモードに変更するとエンジンエラーが発生する可能性があります。本当に変更しますか？",
+          type: "warning",
+          buttons: ["変更しない", "変更する"],
+          cancelId: 0,
+        });
+
+        if (response !== 1) {
+          isChangeable = false;
+        }
+      }
+    }
+
+    if (isChangeable) {
+      store.set("useGpu", useGpu);
+      dialog.showMessageBoxSync(win, {
+        message: "エンジンの起動モードを変更しました",
+        detail: "変更を適用するためにVOICEVOXを再起動してください。",
+      });
+    }
+
+    menu.setActiveLaunchMode(store.get("useGpu", false) as boolean);
+  })
+  .setOnSaveAllAudioItemClicked(() =>
+    win.webContents.send(GENERATE_AND_SAVE_ALL_AUDIO)
+  )
+  .setOnImportFromFileItemClicked(() => win.webContents.send(IMPORT_FROM_FILE))
+  .setOnSaveProjectFileItemClicked(() =>
+    win.webContents.send(SAVE_PROJECT_FILE)
+  )
+  .setOnLoadProjectFileItemClicked(() =>
+    win.webContents.send(LOAD_PROJECT_FILE)
+  )
+  .build();
+Menu.setApplicationMenu(menu.instance);
+
 // create window
-if (!isDevelopment) {
-  Menu.setApplicationMenu(null);
-}
 async function createWindow() {
+  nativeTheme.themeSource = "light";
   win = new BrowserWindow({
     width: 800,
     height: 600,
@@ -167,6 +222,7 @@ async function createHelpWindow() {
     },
     icon: path.join(__static, "icon.png"),
   });
+  child.removeMenu();
 
   if (process.env.WEBPACK_DEV_SERVER_URL) {
     await child.loadURL(
@@ -178,58 +234,95 @@ async function createHelpWindow() {
   if (isDevelopment) child.webContents.openDevTools();
 }
 
+ipcMain.handle("GET_APP_INFOS", () => {
+  const name = app.getName();
+  const version = app.getVersion();
+  return {
+    name,
+    version,
+  };
+});
+
 // プロセス間通信
-ipcMain.handle(GET_TEMP_DIR, (event) => {
+ipcMain.handle("GET_TEMP_DIR", () => {
   return tempDir;
 });
 
-ipcMain.handle(GET_CHARACTOR_INFOS, (event) => {
+ipcMain.handle("GET_CHARACTOR_INFOS", () => {
   return charactorInfos;
 });
 
-ipcMain.handle(GET_OSS_LICENSES, (event) => {
+ipcMain.handle("GET_OSS_LICENSES", () => {
   return ossLicenses;
 });
 
-ipcMain.handle(GET_UPDATE_INFOS, (event) => {
+ipcMain.handle("GET_UPDATE_INFOS", () => {
   return updateInfos;
 });
 
-ipcMain.handle(
-  SHOW_SAVE_DIALOG,
-  (event, { title, defaultPath }: { title: string; defaultPath?: string }) => {
-    return dialog.showSaveDialogSync(win, {
-      title,
-      defaultPath,
-      filters: [{ name: "Wave File", extensions: ["wav"] }],
-      properties: ["createDirectory"],
+ipcMain.handle("SHOW_AUDIO_SAVE_DIALOG", (event, { title, defaultPath }) => {
+  return dialog.showSaveDialogSync(win, {
+    title,
+    defaultPath,
+    filters: [{ name: "Wave File", extensions: ["wav"] }],
+    properties: ["createDirectory"],
+  });
+});
+
+ipcMain.handle("SHOW_OPEN_DIRECOTRY_DIALOG", (event, { title }) => {
+  return dialog.showOpenDialogSync(win, {
+    title,
+    properties: ["openDirectory", "createDirectory"],
+  })?.[0];
+});
+
+ipcMain.handle("SHOW_PROJECT_SAVE_DIALOG", (event, { title }) => {
+  return dialog.showSaveDialogSync(win, {
+    title,
+    filters: [{ name: "VOICEVOX Project file", extensions: ["vvproj"] }],
+    properties: ["showOverwriteConfirmation"],
+  });
+});
+
+ipcMain.handle("SHOW_PROJECT_LOAD_DIALOG", (event, { title }) => {
+  return dialog.showOpenDialogSync(win, {
+    title,
+    filters: [{ name: "VOICEVOX Project file", extensions: ["vvproj"] }],
+    properties: ["openFile"],
+  });
+});
+
+ipcMain.handle("SHOW_CONFIRM_DIALOG", (event, { title, message }) => {
+  return dialog
+    .showMessageBox(win, {
+      type: "info",
+      buttons: ["OK", "Cancel"],
+      title: title,
+      message: message,
+    })
+    .then((value) => {
+      return value.response == 0;
     });
-  }
-);
+});
 
-ipcMain.handle(
-  SHOW_OPEN_DIRECOTRY_DIALOG,
-  (event, { title }: { title: string }) => {
-    return dialog.showOpenDialogSync(win, {
-      title,
-      properties: ["openDirectory", "createDirectory"],
-    })?.[0];
-  }
-);
+ipcMain.handle("SHOW_IMPORT_FILE_DIALOG", (event, { title }) => {
+  return dialog.showOpenDialogSync(win, {
+    title,
+    filters: [{ name: "Text", extensions: ["txt"] }],
+    properties: ["openFile", "createDirectory"],
+  })?.[0];
+});
 
-ipcMain.handle(
-  SHOW_IMPORT_FILE_DIALOG,
-  (event, { title }: { title: string }) => {
-    return dialog.showOpenDialogSync(win, {
-      title,
-      filters: [{ name: "Text", extensions: ["txt"] }],
-      properties: ["openFile", "createDirectory"],
-    })?.[0];
-  }
-);
-
-ipcMain.handle(CREATE_HELP_WINDOW, (event) => {
+ipcMain.handle("CREATE_HELP_WINDOW", () => {
   createHelpWindow();
+});
+
+ipcMain.handle("OPEN_TEXT_EDIT_CONTEXT_MENU", () => {
+  textEditContextMenu.popup({ window: win });
+});
+
+ipcMain.handle("UPDATE_MENU", (_, uiLocked) => {
+  menu.updateLockMenuItems(uiLocked);
 });
 
 // app callback
@@ -253,7 +346,7 @@ app.on("window-all-closed", () => {
 app.on("quit", () => {
   willQuitEngine = true;
   try {
-    treeKill(engineProcess.pid);
+    engineProcess.pid != undefined && treeKill(engineProcess.pid);
   } catch {
     console.error("engine kill error");
   }

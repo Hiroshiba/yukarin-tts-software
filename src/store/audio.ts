@@ -31,7 +31,7 @@ function parseTextFile(
   if (!charactors.size) return [];
 
   const audioItems: AudioItem[] = [];
-  const seps = [",", "\n"];
+  const seps = [",", "\r\n", "\n"];
   let lastCharactorIndex = 0;
   for (const splittedText of body.split(new RegExp(`${seps.join("|")}`, "g"))) {
     const charactorIndex = charactors.get(splittedText);
@@ -73,6 +73,7 @@ export const SET_AUDIO_CHARACTOR_INDEX = "SET_AUDIO_CHARACTOR_INDEX";
 export const CHANGE_CHARACTOR_INDEX = "CHANGE_CHARACTOR_INDEX";
 export const INSERT_AUDIO_ITEM = "INSERT_AUDIO_ITEM";
 export const REMOVE_AUDIO_ITEM = "REMOVE_AUDIO_ITEM";
+export const REMOVE_ALL_AUDIO_ITEM = "REMOVE_ALL_AUDIO_ITEM";
 export const REGISTER_AUDIO_ITEM = "REGISTER_AUDIO_ITEM";
 export const GET_AUDIO_CACHE = "GET_AUDIO_CACHE";
 export const SET_ACCENT_PHRASES = "SET_ACCENT_PHRASES";
@@ -100,6 +101,8 @@ export const SET_AUDIO_NOW_GENERATING = "SET_AUDIO_NOW_GENERATING";
 export const PLAY_CONTINUOUSLY_AUDIO = "PLAY_CONTINUOUSLY_AUDIO";
 export const STOP_CONTINUOUSLY_AUDIO = "STOP_CONTINUOUSLY_AUDIO";
 export const SET_NOW_PLAYING_CONTINUOUSLY = "SET_NOW_PLAYING_CONTINUOUSLY";
+export const PUT_TEXTS = "PUT_TEXTS";
+export const OPEN_TEXT_EDIT_CONTEXT_MENU = "OPEN_TEXT_EDIT_CONTEXT_MENU";
 
 const audioBlobCache: Record<string, Blob> = {};
 const audioElements: Record<string, HTMLAudioElement> = {};
@@ -226,6 +229,13 @@ export const audioStore = {
         delete draft.audioStates[audioKey];
       }
     ),
+    [REMOVE_ALL_AUDIO_ITEM]: createCommandAction((draft) => {
+      for (const audioKey of draft.audioKeys) {
+        delete draft.audioItems[audioKey];
+        delete draft.audioStates[audioKey];
+      }
+      draft.audioKeys.splice(0, draft.audioKeys.length);
+    }),
     [REGISTER_AUDIO_ITEM](
       { state, dispatch },
       {
@@ -483,11 +493,14 @@ export const audioStore = {
         { state, dispatch },
         { audioKey, filePath }: { audioKey: string; filePath?: string }
       ) => {
-        const blob: Blob = await dispatch(GENERATE_AUDIO, { audioKey });
-        filePath ??= await window.electron.showSaveDialog({
+        const blobPromise: Promise<Blob> = dispatch(GENERATE_AUDIO, {
+          audioKey,
+        });
+        filePath ??= await window.electron.showAudioSaveDialog({
           title: "Save",
           defaultPath: buildFileName(state, audioKey),
         });
+        const blob = await blobPromise;
         if (filePath) {
           window.electron.writeFile({
             filePath,
@@ -526,9 +539,14 @@ export const audioStore = {
         title: "セリフ読み込み",
       });
       if (filePath) {
-        const body = new TextDecoder("utf-8").decode(
+        let body = new TextDecoder("utf-8").decode(
           await window.electron.readFile({ filePath })
         );
+        if (body.indexOf("\ufffd") > -1) {
+          body = new TextDecoder("shift-jis").decode(
+            await window.electron.readFile({ filePath })
+          );
+        }
         const audioItems = parseTextFile(body, state.charactorInfos);
         return Promise.all(
           audioItems.map((item) =>
@@ -604,6 +622,38 @@ export const audioStore = {
           dispatch(STOP_AUDIO, { audioKey });
         }
       }
+    },
+    [PUT_TEXTS]: createUILockAction(
+      async (
+        { dispatch },
+        {
+          texts,
+          charactorIndex,
+          prevAudioKey,
+        }: {
+          texts: string[];
+          charactorIndex: number | undefined;
+          prevAudioKey: string | undefined;
+        }
+      ) => {
+        const arrLen = texts.length;
+        charactorIndex == undefined ? 0 : charactorIndex;
+        for (let i = 0; i < arrLen; i++) {
+          if (texts[i] != "") {
+            const audioItem = {
+              text: texts[i],
+              charactorIndex: charactorIndex,
+            };
+            prevAudioKey = await dispatch(REGISTER_AUDIO_ITEM, {
+              audioItem: audioItem,
+              prevAudioKey: prevAudioKey,
+            });
+          }
+        }
+      }
+    ),
+    [OPEN_TEXT_EDIT_CONTEXT_MENU]() {
+      window.electron.openTextEditContextMenu();
     },
   },
 } as StoreOptions<State>;
