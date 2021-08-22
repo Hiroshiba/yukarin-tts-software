@@ -34,8 +34,8 @@
               aria-label="音声ファイルとして保存"
               size="small"
               icon="file_download"
-              @click="save"
-              :disable="nowPlaying || nowGenerating"
+              @click="save()"
+              :disable="nowPlaying || nowGenerating || uiLocked"
             ></q-btn>
           </template>
         </div>
@@ -137,7 +137,22 @@
               :style="{ 'grid-column': `${moraIndex * 2 + 1} / span 1` }"
             >
               <!-- div for input width -->
-              <div>
+              <div
+                @mouseenter="setPitchLabel(true, accentPhraseIndex, moraIndex)"
+                @mouseleave="setPitchLabel(false)"
+              >
+                <q-badge
+                  class="pitch-label"
+                  text-color="secondary"
+                  v-if="
+                    (pitchLabel.visible || pitchLabel.panning) &&
+                    pitchLabel.accentPhraseIndex == accentPhraseIndex &&
+                    pitchLabel.moraIndex == moraIndex &&
+                    mora.pitch > 0
+                  "
+                >
+                  {{ mora.pitch.toPrecision(3) }}
+                </q-badge>
                 <q-slider
                   vertical
                   reverse
@@ -163,6 +178,7 @@
                       $event.ctrlKey
                     )
                   "
+                  @pan="setPitchPanning"
                 />
               </div>
             </div>
@@ -190,9 +206,9 @@
               :class="[
                 'splitter-cell',
                 {
-                  'splitter-cell-splitted':
+                  'splitter-cell-be-split':
                     moraIndex == accentPhrase.moras.length - 1,
-                  'splitter-cell-splitted-pause': accentPhrase.pauseMora,
+                  'splitter-cell-be-split-pause': accentPhrase.pauseMora,
                 },
               ]"
               :style="{ 'grid-column': `${moraIndex * 2 + 2} / span 1` }"
@@ -207,8 +223,8 @@
               "
               class="
                 splitter-cell
-                splitter-cell-splitted
-                splitter-cell-splitted-pause
+                splitter-cell-be-split
+                splitter-cell-be-split-pause
               "
             />
           </template>
@@ -219,7 +235,7 @@
 </template>
 
 <script lang="ts">
-import { computed, defineComponent, ref } from "vue";
+import { computed, defineComponent, reactive, ref } from "vue";
 import { useStore } from "@/store";
 import {
   ACTIVE_AUDIO_KEY,
@@ -373,6 +389,7 @@ export default defineComponent({
     const save = () => {
       store.dispatch(GENERATE_AND_SAVE_AUDIO, {
         audioKey: activeAudioKey.value!,
+        encoding: store.state.fileEncoding,
       });
     };
 
@@ -387,6 +404,30 @@ export default defineComponent({
     const nowPlayingContinuously = computed(
       () => store.state.nowPlayingContinuously
     );
+
+    const pitchLabel = reactive({
+      visible: false,
+      // NOTE: q-slider操作中の表示のON/OFFは@panに渡ってくるphaseで判定する
+      // SEE: https://github.com/quasarframework/quasar/issues/7739#issuecomment-689664504
+      panning: false,
+      accentPhraseIndex: -1,
+      moraIndex: -1,
+    });
+
+    const setPitchLabel = (
+      visible: boolean,
+      accentPhraseIndex: number | undefined,
+      moraIndex: number | undefined
+    ) => {
+      pitchLabel.visible = visible;
+      pitchLabel.accentPhraseIndex =
+        accentPhraseIndex ?? pitchLabel.accentPhraseIndex;
+      pitchLabel.moraIndex = moraIndex ?? pitchLabel.moraIndex;
+    };
+
+    const setPitchPanning = (panningPhase: string) => {
+      pitchLabel.panning = panningPhase === "start";
+    };
 
     return {
       selectDetail,
@@ -410,6 +451,9 @@ export default defineComponent({
       nowPlaying,
       nowGenerating,
       nowPlayingContinuously,
+      pitchLabel,
+      setPitchLabel,
+      setPitchPanning,
     };
   },
 });
@@ -417,6 +461,8 @@ export default defineComponent({
 
 <style scoped lang="scss">
 @use '@/styles' as global;
+
+$pitch-label-height: 24px;
 
 .root > div {
   display: flex;
@@ -453,6 +499,7 @@ export default defineComponent({
     margin-left: 5px;
     margin-right: 5px;
     margin-bottom: 5px;
+    padding-left: 5px;
 
     display: flex;
     overflow-x: scroll;
@@ -513,18 +560,18 @@ export default defineComponent({
           min-width: 10px;
           max-width: 10px;
           grid-row: 3 / span 1;
-          z-index: global.$detail-veiw-splitter-cell-zindex;
+          z-index: global.$detail-view-splitter-cell-z-index;
         }
         &.splitter-cell:hover {
           background-color: #cdf;
           cursor: pointer;
         }
-        &.splitter-cell-splitted {
+        &.splitter-cell-be-split {
           min-width: 40px;
           max-width: 40px;
           grid-row: 1 / span 3;
         }
-        &.splitter-cell-splitted-pause {
+        &.splitter-cell-be-split-pause {
           min-width: 10px;
           max-width: 10px;
         }
@@ -548,13 +595,19 @@ export default defineComponent({
             top: 8px;
             bottom: 8px;
             .q-slider {
-              height: 100%;
+              height: calc(100% - #{$pitch-label-height + 12px});
+              margin-top: $pitch-label-height + 12px;
               min-width: 30px;
               max-width: 30px;
               ::v-deep(.q-slider__track-container--v) {
                 margin-left: -1.5px;
                 width: 3px;
               }
+            }
+            .pitch-label {
+              height: $pitch-label-height;
+              padding: 0px 8px;
+              transform: translateX(-50%) translateX(15px);
             }
           }
         }

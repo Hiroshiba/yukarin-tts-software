@@ -9,6 +9,13 @@ module.exports = {
     electronBuilder: {
       preload: "src/electron/preload.ts",
       builderOptions: {
+        fileAssociations: [
+          {
+            ext: "vvproj",
+            name: "VOICEVOX Project file",
+            role: "Editor",
+          },
+        ],
         extraFiles: [
           "README_SOFTWARE.txt",
           "README_LIBRARY.txt",
@@ -18,6 +25,25 @@ module.exports = {
             to: "",
           },
         ],
+        // electron-builder installer
+        productName: "VOICEVOX",
+        appId: "jp.hiroshiba.voicevox",
+        copyright: "Hiroshiba Kazuyuki",
+        compression: "maximum",
+        afterAllArtifactBuild: path.resolve(
+          __dirname,
+          "build",
+          "splitResources.js"
+        ),
+        win: {
+          icon: "public/icon.png",
+          target: [
+            {
+              target: "nsis-web",
+              arch: ["x64"],
+            },
+          ],
+        },
       },
     },
   },

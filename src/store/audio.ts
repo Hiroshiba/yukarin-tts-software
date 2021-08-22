@@ -5,7 +5,8 @@ import { createCommandAction } from "./command";
 import { v4 as uuidv4 } from "uuid";
 import { AudioItem, State } from "./type";
 import { createUILockAction } from "./ui";
-import { CharactorInfo } from "@/type/preload";
+import { CharacterInfo, Encoding as EncodingType } from "@/type/preload";
+import Encoding from "encoding-japanese";
 
 const api = new DefaultApi(
   new Configuration({ basePath: process.env.VUE_APP_ENGINE_URL })
@@ -13,7 +14,7 @@ const api = new DefaultApi(
 
 async function generateUniqueId(audioItem: AudioItem) {
   const data = new TextEncoder().encode(
-    JSON.stringify([audioItem.text, audioItem.query, audioItem.charactorIndex])
+    JSON.stringify([audioItem.text, audioItem.query, audioItem.characterIndex])
   );
   const digest = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(digest))
@@ -23,24 +24,24 @@ async function generateUniqueId(audioItem: AudioItem) {
 
 function parseTextFile(
   body: string,
-  charactorInfos?: CharactorInfo[]
+  characterInfos?: CharacterInfo[]
 ): AudioItem[] {
-  const charactors = new Map(
-    charactorInfos?.map((info, index) => [info.metas.name, index])
+  const characters = new Map(
+    characterInfos?.map((info, index) => [info.metas.name, index])
   );
-  if (!charactors.size) return [];
+  if (!characters.size) return [];
 
   const audioItems: AudioItem[] = [];
   const seps = [",", "\r\n", "\n"];
-  let lastCharactorIndex = 0;
+  let lastCharacterIndex = 0;
   for (const splittedText of body.split(new RegExp(`${seps.join("|")}`, "g"))) {
-    const charactorIndex = charactors.get(splittedText);
-    if (charactorIndex !== undefined) {
-      lastCharactorIndex = charactorIndex;
+    const characterIndex = characters.get(splittedText);
+    if (characterIndex !== undefined) {
+      lastCharacterIndex = characterIndex;
       continue;
     }
 
-    audioItems.push({ text: splittedText, charactorIndex: lastCharactorIndex });
+    audioItems.push({ text: splittedText, characterIndex: lastCharacterIndex });
   }
   return audioItems;
 }
@@ -50,7 +51,7 @@ function buildFileName(state: State, audioKey: string) {
   const sanitizer = /[\x00-\x1f\x22\x2a\x2f\x3a\x3c\x3e\x3f\x5c\x7c\x7f]/g;
   const index = state.audioKeys.indexOf(audioKey);
   const audioItem = state.audioItems[audioKey];
-  const character = state.charactorInfos![audioItem.charactorIndex!];
+  const character = state.characterInfos![audioItem.characterIndex!];
   const characterName = character.metas.name.replace(sanitizer, "");
   let text = audioItem.text.replace(sanitizer, "");
   if (text.length > 10) {
@@ -66,11 +67,11 @@ export const START_WAITING_ENGINE = "START_WAITING_ENGINE";
 export const ACTIVE_AUDIO_KEY = "ACTIVE_AUDIO_KEY";
 export const SET_ACTIVE_AUDIO_KEY = "SET_ACTIVE_AUDIO_KEY";
 export const IS_ACTIVE = "IS_ACTIVE";
-export const SET_CHARACTOR_INFOS = "SET_CHARACTOR_INFOS";
-export const LOAD_CHARACTOR = "LOAD_CHARACTOR";
+export const SET_CHARACTER_INFOS = "SET_CHARACTER_INFOS";
+export const LOAD_CHARACTER = "LOAD_CHARACTER";
 export const SET_AUDIO_TEXT = "SET_AUDIO_TEXT";
-export const SET_AUDIO_CHARACTOR_INDEX = "SET_AUDIO_CHARACTOR_INDEX";
-export const CHANGE_CHARACTOR_INDEX = "CHANGE_CHARACTOR_INDEX";
+export const SET_AUDIO_CHARACTER_INDEX = "SET_AUDIO_CHARACTER_INDEX";
+export const CHANGE_CHARACTER_INDEX = "CHANGE_CHARACTER_INDEX";
 export const INSERT_AUDIO_ITEM = "INSERT_AUDIO_ITEM";
 export const REMOVE_AUDIO_ITEM = "REMOVE_AUDIO_ITEM";
 export const REMOVE_ALL_AUDIO_ITEM = "REMOVE_ALL_AUDIO_ITEM";
@@ -127,11 +128,11 @@ export const audioStore = {
     [SET_ENGINE_READY](state, { isEngineReady }: { isEngineReady: boolean }) {
       state.isEngineReady = isEngineReady;
     },
-    [SET_CHARACTOR_INFOS](
+    [SET_CHARACTER_INFOS](
       state,
-      { charactorInfos }: { charactorInfos: CharactorInfo[] }
+      { characterInfos }: { characterInfos: CharacterInfo[] }
     ) {
-      state.charactorInfos = charactorInfos;
+      state.characterInfos = characterInfos;
     },
     [SET_ACTIVE_AUDIO_KEY](state, { audioKey }: { audioKey?: string }) {
       state._activeAudioKey = audioKey;
@@ -170,37 +171,37 @@ export const audioStore = {
         break;
       }
     }),
-    [LOAD_CHARACTOR]: createUILockAction(async ({ commit }) => {
-      const charactorInfos = await window.electron.getCharactorInfos();
+    [LOAD_CHARACTER]: createUILockAction(async ({ commit }) => {
+      const characterInfos = await window.electron.getCharacterInfos();
 
       await Promise.all(
-        charactorInfos.map(async (charactorInfo) => {
+        characterInfos.map(async (characterInfo) => {
           const buffer = await window.electron.readFile({
-            filePath: charactorInfo.iconPath,
+            filePath: characterInfo.iconPath,
           });
-          charactorInfo.iconBlob = new Blob([buffer]);
+          characterInfo.iconBlob = new Blob([buffer]);
         })
       );
 
-      commit(SET_CHARACTOR_INFOS, { charactorInfos });
+      commit(SET_CHARACTER_INFOS, { characterInfos });
     }),
     [SET_AUDIO_TEXT]: createCommandAction(
       (draft, { audioKey, text }: { audioKey: string; text: string }) => {
         draft.audioItems[audioKey].text = text;
       }
     ),
-    [SET_AUDIO_CHARACTOR_INDEX]: createCommandAction<
+    [SET_AUDIO_CHARACTER_INDEX]: createCommandAction<
       State,
-      { audioKey: string; charactorIndex: number }
-    >((draft, { audioKey, charactorIndex }) => {
-      draft.audioItems[audioKey].charactorIndex = charactorIndex;
+      { audioKey: string; characterIndex: number }
+    >((draft, { audioKey, characterIndex }) => {
+      draft.audioItems[audioKey].characterIndex = characterIndex;
     }),
-    async [CHANGE_CHARACTOR_INDEX](
+    async [CHANGE_CHARACTER_INDEX](
       { getters, dispatch },
-      { audioKey, charactorIndex }: { audioKey: string; charactorIndex: number }
+      { audioKey, characterIndex }: { audioKey: string; characterIndex: number }
     ) {
       const haveAudioQuery = getters[HAVE_AUDIO_QUERY](audioKey);
-      await dispatch(SET_AUDIO_CHARACTOR_INDEX, { audioKey, charactorIndex });
+      await dispatch(SET_AUDIO_CHARACTER_INDEX, { audioKey, characterIndex });
       if (haveAudioQuery) {
         return dispatch(FETCH_MORA_PITCH, { audioKey });
       }
@@ -294,7 +295,7 @@ export const audioStore = {
         .accentPhrasesAccentPhrasesPost({
           text: audioItem.text,
           speaker:
-            state.charactorInfos![audioItem.charactorIndex!].metas.speaker,
+            state.characterInfos![audioItem.characterIndex!].metas.speaker,
         })
         .then((accentPhrases) =>
           dispatch(SET_ACCENT_PHRASES, { audioKey, accentPhrases })
@@ -310,7 +311,7 @@ export const audioStore = {
         .moraPitchMoraPitchPost({
           accentPhrase: audioItem.query!.accentPhrases,
           speaker:
-            state.charactorInfos![audioItem.charactorIndex!].metas.speaker,
+            state.characterInfos![audioItem.characterIndex!].metas.speaker,
         })
         .then((accentPhrases) =>
           dispatch(SET_ACCENT_PHRASES, { audioKey, accentPhrases })
@@ -326,7 +327,7 @@ export const audioStore = {
         .audioQueryAudioQueryPost({
           text: audioItem.text,
           speaker:
-            state.charactorInfos![audioItem.charactorIndex!].metas.speaker,
+            state.characterInfos![audioItem.characterIndex!].metas.speaker,
         })
         .then((audioQuery) =>
           dispatch(SET_AUDIO_QUERY, { audioKey, audioQuery })
@@ -480,7 +481,7 @@ export const audioStore = {
           .synthesisSynthesisPost({
             audioQuery: audioItem.query!,
             speaker:
-              state.charactorInfos![audioItem.charactorIndex!].metas.speaker,
+              state.characterInfos![audioItem.characterIndex!].metas.speaker,
           })
           .then(async (blob) => {
             audioBlobCache[id] = blob;
@@ -491,7 +492,11 @@ export const audioStore = {
     [GENERATE_AND_SAVE_AUDIO]: createUILockAction(
       async (
         { state, dispatch },
-        { audioKey, filePath }: { audioKey: string; filePath?: string }
+        {
+          audioKey,
+          filePath,
+          encoding,
+        }: { audioKey: string; filePath?: string; encoding?: EncodingType }
       ) => {
         const blobPromise: Promise<Blob> = dispatch(GENERATE_AUDIO, {
           audioKey,
@@ -506,10 +511,21 @@ export const audioStore = {
             filePath,
             buffer: await blob.arrayBuffer(),
           });
-          const bom = new Uint8Array([0xef, 0xbb, 0xbf]);
-          const textBlob = new Blob([bom, state.audioItems[audioKey].text], {
-            type: "text/plain",
-          });
+          const textBlob = ((): Blob => {
+            if (!encoding || encoding === "UTF-8") {
+              const bom = new Uint8Array([0xef, 0xbb, 0xbf]);
+              return new Blob([bom, state.audioItems[audioKey].text], {
+                type: "text/plain;charset=UTF-8",
+              });
+            }
+            const sjisArray = Encoding.convert(
+              Encoding.stringToCode(state.audioItems[audioKey].text),
+              { to: "SJIS", type: "arraybuffer" }
+            );
+            return new Blob([new Uint8Array(sjisArray)], {
+              type: "text/plain;charset=Shift_JIS",
+            });
+          })();
           window.electron.writeFile({
             filePath: filePath.replace(/\.wav$/, ".txt"),
             buffer: await textBlob.arrayBuffer(),
@@ -518,7 +534,10 @@ export const audioStore = {
       }
     ),
     [GENERATE_AND_SAVE_ALL_AUDIO]: createUILockAction(
-      async ({ state, dispatch }, { dirPath }: { dirPath?: string }) => {
+      async (
+        { state, dispatch },
+        { dirPath, encoding }: { dirPath?: string; encoding: EncodingType }
+      ) => {
         dirPath ??= await window.electron.showOpenDirectoryDialog({
           title: "Save ALL",
         });
@@ -528,17 +547,21 @@ export const audioStore = {
             return dispatch(GENERATE_AND_SAVE_AUDIO, {
               audioKey,
               filePath: path.join(dirPath!, name),
+              encoding,
             });
           });
           return Promise.all(promises);
         }
       }
     ),
-    [IMPORT_FROM_FILE]: createUILockAction(async ({ state, dispatch }) => {
-      const filePath = await window.electron.showImportFileDialog({
-        title: "セリフ読み込み",
-      });
-      if (filePath) {
+    [IMPORT_FROM_FILE]: createUILockAction(
+      async ({ state, dispatch }, { filePath }: { filePath?: string }) => {
+        if (!filePath) {
+          filePath = await window.electron.showImportFileDialog({
+            title: "セリフ読み込み",
+          });
+          if (!filePath) return;
+        }
         let body = new TextDecoder("utf-8").decode(
           await window.electron.readFile({ filePath })
         );
@@ -547,14 +570,14 @@ export const audioStore = {
             await window.electron.readFile({ filePath })
           );
         }
-        const audioItems = parseTextFile(body, state.charactorInfos);
+        const audioItems = parseTextFile(body, state.characterInfos);
         return Promise.all(
           audioItems.map((item) =>
             dispatch(REGISTER_AUDIO_ITEM, { audioItem: item })
           )
         );
       }
-    }),
+    ),
     [PLAY_AUDIO]: createUILockAction(
       async ({ commit, dispatch }, { audioKey }: { audioKey: string }) => {
         const audioElem = audioElements[audioKey];
@@ -628,28 +651,36 @@ export const audioStore = {
         { dispatch },
         {
           texts,
-          charactorIndex,
+          characterIndex,
           prevAudioKey,
         }: {
           texts: string[];
-          charactorIndex: number | undefined;
+          characterIndex: number | undefined;
           prevAudioKey: string | undefined;
         }
       ) => {
         const arrLen = texts.length;
-        charactorIndex == undefined ? 0 : charactorIndex;
+        characterIndex == undefined ? 0 : characterIndex;
+        const addedAudioKeys = [];
         for (let i = 0; i < arrLen; i++) {
           if (texts[i] != "") {
             const audioItem = {
               text: texts[i],
-              charactorIndex: charactorIndex,
+              characterIndex: characterIndex,
             };
             prevAudioKey = await dispatch(REGISTER_AUDIO_ITEM, {
               audioItem: audioItem,
               prevAudioKey: prevAudioKey,
             });
+            addedAudioKeys.push(prevAudioKey);
           }
         }
+
+        return Promise.all(
+          addedAudioKeys.map((audioKey) =>
+            dispatch(FETCH_AUDIO_QUERY, { audioKey })
+          )
+        );
       }
     ),
     [OPEN_TEXT_EDIT_CONTEXT_MENU]() {

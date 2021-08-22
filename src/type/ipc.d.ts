@@ -1,4 +1,7 @@
-type IpcData = {
+/**
+ * invoke, handle
+ */
+type IpcIHData = {
   GET_APP_INFOS: {
     args: [];
     return: import("@/type/preload").AppInfos;
@@ -9,9 +12,14 @@ type IpcData = {
     return: string;
   };
 
-  GET_CHARACTOR_INFOS: {
+  GET_CHARACTER_INFOS: {
     args: [];
-    return: import("@/type/preload").CharactorInfo[];
+    return: import("@/type/preload").CharacterInfo[];
+  };
+
+  GET_POLICY_TEXT: {
+    args: [];
+    return: string;
   };
 
   GET_OSS_LICENSES: {
@@ -29,7 +37,7 @@ type IpcData = {
     return?: string;
   };
 
-  SHOW_OPEN_DIRECOTRY_DIALOG: {
+  SHOW_OPEN_DIRECTORY_DIALOG: {
     args: [obj: { title: string }];
     return?: string;
   };
@@ -37,11 +45,6 @@ type IpcData = {
   SHOW_IMPORT_FILE_DIALOG: {
     args: [obj: { title: string }];
     return?: string;
-  };
-
-  CREATE_HELP_WINDOW: {
-    args: [];
-    return: void;
   };
 
   SHOW_PROJECT_SAVE_DIALOG: {
@@ -59,32 +62,68 @@ type IpcData = {
     return: boolean;
   };
 
+  SHOW_WARNING_DIALOG: {
+    args: [obj: { title: string; message: string }];
+    return: Electron.MessageBoxReturnValue;
+  };
+
+  SHOW_ERROR_DIALOG: {
+    args: [obj: { title: string; message: string }];
+    return: Electron.MessageBoxReturnValue;
+  };
+
   OPEN_TEXT_EDIT_CONTEXT_MENU: {
     args: [];
     return: void;
   };
 
-  UPDATE_MENU: {
-    args: [boolean];
+  USE_GPU: {
+    args: [obj: { newValue?: boolean }];
+    return: boolean;
+  };
+
+  IS_AVAILABLE_GPU_MODE: {
+    args: [];
+    return: boolean;
+  };
+
+  FILE_ENCODING: {
+    args: [obj: { newValue?: import("@/type/preload").Encoding }];
+    return: import("@/type/preload").Encoding;
+  };
+
+  CLOSE_WINDOW: {
+    args: [];
+    return: void;
+  };
+
+  MINIMIZE_WINDOW: {
+    args: [];
+    return: void;
+  };
+
+  MAXIMIZE_WINDOW: {
+    args: [];
     return: void;
   };
 };
 
-declare namespace Electron {
-  interface IpcMain {
-    handle<T extends keyof IpcData>(
-      channel: T,
-      listener: (
-        event: IpcMainInvokeEvent,
-        ...args: IpcData[T]["args"]
-      ) => IpcData[T]["return"] | Promise<IpcData[T]["return"]>
-    ): void;
-  }
+/**
+ * send, on
+ */
+type IpcSOData = {
+  LOAD_PROJECT_FILE: {
+    args: [obj: { filePath?: string; confirm?: boolean }];
+    return: void;
+  };
 
-  interface IpcRenderer {
-    invoke<T extends keyof IpcData>(
-      channel: T,
-      ...args: IpcData[T]["args"]
-    ): Promise<IpcData[T]["return"]>;
-  }
-}
+  DETECT_MAXIMIZED: {
+    args: [];
+    return: void;
+  };
+
+  DETECT_UNMAXIMIZED: {
+    args: [];
+    return: void;
+  };
+};

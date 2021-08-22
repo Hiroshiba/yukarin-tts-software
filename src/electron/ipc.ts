@@ -1,4 +1,28 @@
-export const GENERATE_AND_SAVE_ALL_AUDIO = "GENERATE_AND_SAVE_ALL_AUDIO";
-export const IMPORT_FROM_FILE = "IMPORT_FROM_FILE";
-export const SAVE_PROJECT_FILE = "SAVE_PROJECT_FILE";
-export const LOAD_PROJECT_FILE = "LOAD_PROJECT_FILE";
+import { ipcMain, IpcMainInvokeEvent, BrowserWindow } from "electron";
+
+export function ipcMainHandle<T extends keyof IpcIHData>(
+  channel: T,
+  listener: (
+    event: IpcMainInvokeEvent,
+    ...args: IpcIHData[T]["args"]
+  ) => IpcIHData[T]["return"] | Promise<IpcIHData[T]["return"]>
+): void;
+export function ipcMainHandle(
+  channel: string,
+  listener: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
+): void {
+  ipcMain.handle(channel, listener);
+}
+
+export function ipcMainSend<T extends keyof IpcSOData>(
+  win: BrowserWindow,
+  channel: T,
+  ...args: IpcSOData[T]["args"]
+): void;
+export function ipcMainSend(
+  win: BrowserWindow,
+  channel: string,
+  ...args: unknown[]
+): void {
+  return win.webContents.send(channel, ...args);
+}

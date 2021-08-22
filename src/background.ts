@@ -5,32 +5,17 @@ import dotenv from "dotenv";
 import treeKill from "tree-kill";
 import Store from "electron-store";
 
-import {
-  app,
-  protocol,
-  BrowserWindow,
-  ipcMain,
-  dialog,
-  Menu,
-  shell,
-  nativeTheme,
-} from "electron";
+import { app, protocol, BrowserWindow, dialog, shell } from "electron";
 import { createProtocol } from "vue-cli-plugin-electron-builder/lib";
-import installExtension, { VUEJS_DEVTOOLS } from "electron-devtools-installer";
+import installExtension, { VUEJS3_DEVTOOLS } from "electron-devtools-installer";
 
 import path from "path";
 import { textEditContextMenu } from "./electron/contextMenu";
-import { MenuBuilder } from "./electron/menu";
-import {
-  GENERATE_AND_SAVE_ALL_AUDIO,
-  IMPORT_FROM_FILE,
-  LOAD_PROJECT_FILE,
-  SAVE_PROJECT_FILE,
-} from "./electron/ipc";
 import { hasSupportedGpu } from "./electron/device";
+import { ipcMainHandle, ipcMainSend } from "@/electron/ipc";
 
 import fs from "fs";
-import { CharactorInfo } from "./type/preload";
+import { CharacterInfo, Encoding } from "./type/preload";
 
 let win: BrowserWindow;
 
@@ -38,7 +23,9 @@ let win: BrowserWindow;
 if (!app.requestSingleInstanceLock()) app.quit();
 
 // 設定
-dotenv.config();
+const appDirPath = path.dirname(app.getPath("exe"));
+const envPath = path.join(appDirPath, ".env");
+dotenv.config({ path: envPath });
 const isDevelopment = process.env.NODE_ENV !== "production";
 protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { secure: true, standard: true, stream: true } },
@@ -49,6 +36,9 @@ const store = new Store({
   schema: {
     useGpu: {
       type: "boolean",
+    },
+    fileEncoding: {
+      type: "string",
     },
   },
 });
@@ -73,10 +63,11 @@ async function runEngine() {
     });
   }
 
-  menu.setActiveLaunchMode(store.get("useGpu", false) as boolean);
-
   // エンジンプロセスの起動
-  const enginePath = process.env.ENGINE_PATH ?? "run.exe";
+  const enginePath = path.resolve(
+    appDirPath,
+    process.env.ENGINE_PATH ?? "run.exe"
+  );
   const args = store.get("useGpu") ? ["--use_gpu"] : null;
   engineProcess = execFile(
     enginePath,
@@ -101,10 +92,10 @@ if (!fs.existsSync(tempDir)) {
 
 // キャラクター情報の読み込み
 declare let __static: string;
-const charactorInfos = fs
-  .readdirSync(path.join(__static, "charactors"))
-  .map((dirRelPath): CharactorInfo => {
-    const dirPath = path.join(__static, "charactors", dirRelPath);
+const characterInfos = fs
+  .readdirSync(path.join(__static, "characters"))
+  .map((dirRelPath): CharacterInfo => {
+    const dirPath = path.join(__static, "characters", dirRelPath);
     return {
       dirPath,
       iconPath: path.join(dirPath, "icon.png"),
@@ -113,6 +104,9 @@ const charactorInfos = fs
       ),
     };
   });
+
+// 利用規約テキストの読み込み
+const policyText = fs.readFileSync(path.join(__static, "policy.md"), "utf-8");
 
 // OSSライセンス情報の読み込み
 const ossLicenses = JSON.parse(
@@ -126,68 +120,15 @@ const updateInfos = JSON.parse(
   })
 );
 
-// initialize menu
-const menu = MenuBuilder()
-  .configure(isDevelopment)
-  .setOnLaunchModeItemClicked(async (useGpu) => {
-    if ((store.get("useGpu", false) as boolean) == useGpu) {
-      return;
-    }
-
-    let isChangeable = true;
-
-    if (useGpu) {
-      const isAvaiableGPUMode = await hasSupportedGpu();
-      if (!isAvaiableGPUMode) {
-        const response = dialog.showMessageBoxSync(win, {
-          message: "対応するGPUデバイスが見つかりません",
-          detail:
-            "GPUモードの利用には、メモリが3GB以上あるNVIDIA製GPUが必要です。\nこのままGPUモードに変更するとエンジンエラーが発生する可能性があります。本当に変更しますか？",
-          type: "warning",
-          buttons: ["変更しない", "変更する"],
-          cancelId: 0,
-        });
-
-        if (response !== 1) {
-          isChangeable = false;
-        }
-      }
-    }
-
-    if (isChangeable) {
-      store.set("useGpu", useGpu);
-      dialog.showMessageBoxSync(win, {
-        message: "エンジンの起動モードを変更しました",
-        detail: "変更を適用するためにVOICEVOXを再起動してください。",
-      });
-    }
-
-    menu.setActiveLaunchMode(store.get("useGpu", false) as boolean);
-  })
-  .setOnSaveAllAudioItemClicked(() =>
-    win.webContents.send(GENERATE_AND_SAVE_ALL_AUDIO)
-  )
-  .setOnImportFromFileItemClicked(() => win.webContents.send(IMPORT_FROM_FILE))
-  .setOnSaveProjectFileItemClicked(() =>
-    win.webContents.send(SAVE_PROJECT_FILE)
-  )
-  .setOnLoadProjectFileItemClicked(() =>
-    win.webContents.send(LOAD_PROJECT_FILE)
-  )
-  .build();
-Menu.setApplicationMenu(menu.instance);
-
 // create window
 async function createWindow() {
-  nativeTheme.themeSource = "light";
   win = new BrowserWindow({
     width: 800,
     height: 600,
+    frame: false,
+    minWidth: 320,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
-
-      enableRemoteModule: !!process.env.IS_TEST,
-
       nodeIntegration: true,
       contextIsolation: true,
     },
@@ -203,38 +144,20 @@ async function createWindow() {
     win.loadURL("app://./index.html#/home");
   }
   if (isDevelopment) win.webContents.openDevTools();
-}
 
-// create help window
-async function createHelpWindow() {
-  const child = new BrowserWindow({
-    parent: win,
-    width: 700,
-    height: 500,
-    modal: true,
-    webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+  win.on("maximize", () => win.webContents.send("DETECT_MAXIMIZED"));
+  win.on("unmaximize", () => win.webContents.send("DETECT_UNMAXIMIZED"));
 
-      enableRemoteModule: !!process.env.IS_TEST,
-
-      nodeIntegration: true,
-      contextIsolation: true,
-    },
-    icon: path.join(__static, "icon.png"),
+  win.webContents.once("did-finish-load", () => {
+    if (process.argv.length >= 2) {
+      const filePath = process.argv[1];
+      ipcMainSend(win, "LOAD_PROJECT_FILE", { filePath, confirm: false });
+    }
   });
-  child.removeMenu();
-
-  if (process.env.WEBPACK_DEV_SERVER_URL) {
-    await child.loadURL(
-      (process.env.WEBPACK_DEV_SERVER_URL as string) + "#/help/policy"
-    );
-  } else {
-    child.loadURL("app://./index.html#/help/policy");
-  }
-  if (isDevelopment) child.webContents.openDevTools();
 }
 
-ipcMain.handle("GET_APP_INFOS", () => {
+// プロセス間通信
+ipcMainHandle("GET_APP_INFOS", () => {
   const name = app.getName();
   const version = app.getVersion();
   return {
@@ -243,24 +166,27 @@ ipcMain.handle("GET_APP_INFOS", () => {
   };
 });
 
-// プロセス間通信
-ipcMain.handle("GET_TEMP_DIR", () => {
+ipcMainHandle("GET_TEMP_DIR", () => {
   return tempDir;
 });
 
-ipcMain.handle("GET_CHARACTOR_INFOS", () => {
-  return charactorInfos;
+ipcMainHandle("GET_CHARACTER_INFOS", () => {
+  return characterInfos;
 });
 
-ipcMain.handle("GET_OSS_LICENSES", () => {
+ipcMainHandle("GET_POLICY_TEXT", () => {
+  return policyText;
+});
+
+ipcMainHandle("GET_OSS_LICENSES", () => {
   return ossLicenses;
 });
 
-ipcMain.handle("GET_UPDATE_INFOS", () => {
+ipcMainHandle("GET_UPDATE_INFOS", () => {
   return updateInfos;
 });
 
-ipcMain.handle("SHOW_AUDIO_SAVE_DIALOG", (event, { title, defaultPath }) => {
+ipcMainHandle("SHOW_AUDIO_SAVE_DIALOG", (_, { title, defaultPath }) => {
   return dialog.showSaveDialogSync(win, {
     title,
     defaultPath,
@@ -269,14 +195,14 @@ ipcMain.handle("SHOW_AUDIO_SAVE_DIALOG", (event, { title, defaultPath }) => {
   });
 });
 
-ipcMain.handle("SHOW_OPEN_DIRECOTRY_DIALOG", (event, { title }) => {
+ipcMainHandle("SHOW_OPEN_DIRECTORY_DIALOG", (_, { title }) => {
   return dialog.showOpenDialogSync(win, {
     title,
     properties: ["openDirectory", "createDirectory"],
   })?.[0];
 });
 
-ipcMain.handle("SHOW_PROJECT_SAVE_DIALOG", (event, { title }) => {
+ipcMainHandle("SHOW_PROJECT_SAVE_DIALOG", (_, { title }) => {
   return dialog.showSaveDialogSync(win, {
     title,
     filters: [{ name: "VOICEVOX Project file", extensions: ["vvproj"] }],
@@ -284,7 +210,7 @@ ipcMain.handle("SHOW_PROJECT_SAVE_DIALOG", (event, { title }) => {
   });
 });
 
-ipcMain.handle("SHOW_PROJECT_LOAD_DIALOG", (event, { title }) => {
+ipcMainHandle("SHOW_PROJECT_LOAD_DIALOG", (_, { title }) => {
   return dialog.showOpenDialogSync(win, {
     title,
     filters: [{ name: "VOICEVOX Project file", extensions: ["vvproj"] }],
@@ -292,7 +218,7 @@ ipcMain.handle("SHOW_PROJECT_LOAD_DIALOG", (event, { title }) => {
   });
 });
 
-ipcMain.handle("SHOW_CONFIRM_DIALOG", (event, { title, message }) => {
+ipcMainHandle("SHOW_CONFIRM_DIALOG", (_, { title, message }) => {
   return dialog
     .showMessageBox(win, {
       type: "info",
@@ -305,7 +231,23 @@ ipcMain.handle("SHOW_CONFIRM_DIALOG", (event, { title, message }) => {
     });
 });
 
-ipcMain.handle("SHOW_IMPORT_FILE_DIALOG", (event, { title }) => {
+ipcMainHandle("SHOW_WARNING_DIALOG", (_, { title, message }) => {
+  return dialog.showMessageBox(win, {
+    type: "warning",
+    title: title,
+    message: message,
+  });
+});
+
+ipcMainHandle("SHOW_ERROR_DIALOG", (_, { title, message }) => {
+  return dialog.showMessageBox(win, {
+    type: "error",
+    title: title,
+    message: message,
+  });
+});
+
+ipcMainHandle("SHOW_IMPORT_FILE_DIALOG", (_, { title }) => {
   return dialog.showOpenDialogSync(win, {
     title,
     filters: [{ name: "Text", extensions: ["txt"] }],
@@ -313,16 +255,41 @@ ipcMain.handle("SHOW_IMPORT_FILE_DIALOG", (event, { title }) => {
   })?.[0];
 });
 
-ipcMain.handle("CREATE_HELP_WINDOW", () => {
-  createHelpWindow();
-});
-
-ipcMain.handle("OPEN_TEXT_EDIT_CONTEXT_MENU", () => {
+ipcMainHandle("OPEN_TEXT_EDIT_CONTEXT_MENU", () => {
   textEditContextMenu.popup({ window: win });
 });
 
-ipcMain.handle("UPDATE_MENU", (_, uiLocked) => {
-  menu.updateLockMenuItems(uiLocked);
+ipcMainHandle("USE_GPU", (_, { newValue }) => {
+  if (newValue !== undefined) {
+    store.set("useGpu", newValue);
+  }
+
+  return store.get("useGpu", false) as boolean;
+});
+
+ipcMainHandle("IS_AVAILABLE_GPU_MODE", () => {
+  return hasSupportedGpu();
+});
+
+ipcMainHandle("FILE_ENCODING", (_, { newValue }) => {
+  if (newValue !== undefined) {
+    store.set("fileEncoding", newValue);
+  }
+
+  return store.get("fileEncoding", "UTF-8") as Encoding;
+});
+
+ipcMainHandle("CLOSE_WINDOW", () => {
+  app.emit("window-all-closed");
+  win.destroy();
+});
+ipcMainHandle("MINIMIZE_WINDOW", () => win.minimize());
+ipcMainHandle("MAXIMIZE_WINDOW", () => {
+  if (win.isMaximized()) {
+    win.unmaximize();
+  } else {
+    win.maximize();
+  }
 });
 
 // app callback
@@ -357,9 +324,9 @@ app.on("activate", () => {
 });
 
 app.on("ready", async () => {
-  if (isDevelopment && !process.env.IS_TEST) {
+  if (isDevelopment) {
     try {
-      await installExtension(VUEJS_DEVTOOLS);
+      await installExtension(VUEJS3_DEVTOOLS);
     } catch (e) {
       console.error("Vue Devtools failed to install:", e.toString());
     }

@@ -1,9 +1,9 @@
-import { IpcRenderer } from "electron";
-import { IpcRendererEvent } from "electron/main";
+import { IpcRenderer, IpcRendererEvent } from "electron";
 
 export interface Sandbox {
   getAppInfos(): Promise<AppInfos>;
-  getCharactorInfos(): Promise<CharactorInfo[]>;
+  getCharacterInfos(): Promise<CharacterInfo[]>;
+  getPolicyText(): Promise<string>;
   getOssLicenses(): Promise<Record<string, string>[]>;
   getUpdateInfos(): Promise<Record<string, any>[]>;
   saveTempAudioFile(obj: { relativePath: string; buffer: ArrayBuffer }): void;
@@ -16,16 +16,28 @@ export interface Sandbox {
   showProjectSaveDialog(obj: { title: string }): Promise<string | undefined>;
   showProjectLoadDialog(obj: { title: string }): Promise<string[] | undefined>;
   showConfirmDialog(obj: { title: string; message: string }): Promise<boolean>;
+  showWarningDialog(obj: {
+    title: string;
+    message: string;
+  }): Promise<Electron.MessageBoxReturnValue>;
+  showErrorDialog(obj: {
+    title: string;
+    message: string;
+  }): Promise<Electron.MessageBoxReturnValue>;
   showImportFileDialog(obj: { title: string }): Promise<string | undefined>;
   writeFile(obj: { filePath: string; buffer: ArrayBuffer }): void;
   readFile(obj: { filePath: string }): Promise<ArrayBuffer>;
-  createHelpWindow(): void;
   openTextEditContextMenu(): Promise<void>;
-  updateMenu(uiLocked: boolean): void;
-  onReceivedIPCMsg(
-    channel: string,
-    callback: (event: IpcRendererEvent, ...argv) => void
+  useGpu(newValue?: boolean): Promise<boolean>;
+  isAvailableGPUMode(): Promise<boolean>;
+  fileEncoding(newValue?: Encoding): Promise<Encoding>;
+  onReceivedIPCMsg<T extends keyof IpcSOData>(
+    channel: T,
+    listener: (event: IpcRendererEvent, ...args: IpcSOData[T]["args"]) => void
   ): IpcRenderer;
+  closeWindow(): void;
+  minimizeWindow(): void;
+  maximizeWindow(): void;
 }
 
 export type AppInfos = {
@@ -33,7 +45,7 @@ export type AppInfos = {
   version: string;
 };
 
-export type CharactorInfo = {
+export type CharacterInfo = {
   dirPath: string;
   iconPath: string;
   iconBlob?: Blob;
@@ -43,3 +55,5 @@ export type CharactorInfo = {
     policy: string;
   };
 };
+
+export type Encoding = "UTF-8" | "Shift_JIS";
