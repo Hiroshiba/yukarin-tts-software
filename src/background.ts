@@ -5,7 +5,7 @@ import dotenv from "dotenv";
 import treeKill from "tree-kill";
 import Store from "electron-store";
 
-import { app, protocol, BrowserWindow, dialog, shell } from "electron";
+import { app, protocol, BrowserWindow, dialog, Menu, shell } from "electron";
 import { createProtocol } from "vue-cli-plugin-electron-builder/lib";
 import installExtension, { VUEJS3_DEVTOOLS } from "electron-devtools-installer";
 
@@ -13,26 +13,38 @@ import path from "path";
 import { textEditContextMenu } from "./electron/contextMenu";
 import { hasSupportedGpu } from "./electron/device";
 import { ipcMainHandle, ipcMainSend } from "@/electron/ipc";
+import { logError } from "./electron/log";
 
 import fs from "fs";
 import { CharacterInfo, Encoding } from "./type/preload";
 
+const isDevelopment = process.env.NODE_ENV !== "production";
+
 let win: BrowserWindow;
 
 // 多重起動防止
-if (!app.requestSingleInstanceLock()) app.quit();
+if (!isDevelopment && !app.requestSingleInstanceLock()) app.quit();
+
+process.on("uncaughtException", (error) => {
+  logError(error);
+});
+process.on("unhandledRejection", (reason) => {
+  logError(reason);
+});
 
 // 設定
 const appDirPath = path.dirname(app.getPath("exe"));
 const envPath = path.join(appDirPath, ".env");
 dotenv.config({ path: envPath });
-const isDevelopment = process.env.NODE_ENV !== "production";
 protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { secure: true, standard: true, stream: true } },
 ]);
 
 // 設定ファイル
-const store = new Store({
+const store = new Store<{
+  useGpu: boolean;
+  fileEncoding: Encoding;
+}>({
   schema: {
     useGpu: {
       type: "boolean",
@@ -47,6 +59,10 @@ const store = new Store({
 let willQuitEngine = false;
 let engineProcess: ChildProcess;
 async function runEngine() {
+  willQuitEngine = false;
+  // エンジンが起動完了または失敗するまで待機させる処理を呼び出している。
+  ipcMainSend(win, "START_WAITING_ENGINE");
+
   // 最初のエンジンモード
   if (!store.has("useGpu")) {
     const hasGpu = await hasSupportedGpu();
@@ -75,6 +91,7 @@ async function runEngine() {
     { cwd: path.dirname(enginePath) },
     () => {
       if (!willQuitEngine) {
+        ipcMainSend(win, "DETECTED_ENGINE_ERROR");
         dialog.showErrorBox(
           "音声合成エンジンエラー",
           "音声合成エンジンが異常終了しました。ソフトウェアを再起動してください。"
@@ -99,9 +116,15 @@ const characterInfos = fs
     return {
       dirPath,
       iconPath: path.join(dirPath, "icon.png"),
-      metas: JSON.parse(
-        fs.readFileSync(path.join(dirPath, "metas.json"), { encoding: "utf-8" })
-      ),
+      portraitPath: path.join(dirPath, "portrait.png"),
+      metas: {
+        ...JSON.parse(
+          fs.readFileSync(path.join(dirPath, "metas.json"), {
+            encoding: "utf-8",
+          })
+        ),
+        policy: fs.readFileSync(path.join(dirPath, "policy.md"), "utf-8"),
+      },
     };
   });
 
@@ -147,6 +170,11 @@ async function createWindow() {
 
   win.on("maximize", () => win.webContents.send("DETECT_MAXIMIZED"));
   win.on("unmaximize", () => win.webContents.send("DETECT_UNMAXIMIZED"));
+  win.on("always-on-top-changed", () => {
+    win.webContents.send(
+      win.isAlwaysOnTop() ? "DETECT_PINNED" : "DETECT_UNPINNED"
+    );
+  });
 
   win.webContents.once("did-finish-load", () => {
     if (process.argv.length >= 2) {
@@ -154,6 +182,10 @@ async function createWindow() {
       ipcMainSend(win, "LOAD_PROJECT_FILE", { filePath, confirm: false });
     }
   });
+}
+
+if (!isDevelopment) {
+  Menu.setApplicationMenu(null);
 }
 
 // プロセス間通信
@@ -264,7 +296,7 @@ ipcMainHandle("USE_GPU", (_, { newValue }) => {
     store.set("useGpu", newValue);
   }
 
-  return store.get("useGpu", false) as boolean;
+  return store.get("useGpu", false);
 });
 
 ipcMainHandle("IS_AVAILABLE_GPU_MODE", () => {
@@ -276,7 +308,7 @@ ipcMainHandle("FILE_ENCODING", (_, { newValue }) => {
     store.set("fileEncoding", newValue);
   }
 
-  return store.get("fileEncoding", "UTF-8") as Encoding;
+  return store.get("fileEncoding", "UTF-8");
 });
 
 ipcMainHandle("CLOSE_WINDOW", () => {
@@ -289,6 +321,53 @@ ipcMainHandle("MAXIMIZE_WINDOW", () => {
     win.unmaximize();
   } else {
     win.maximize();
+  }
+});
+
+ipcMainHandle("LOG_ERROR", (_, ...params) => {
+  logError(...params);
+});
+
+ipcMainHandle("RESTART_ENGINE", async () => {
+  /*
+    プロセスが生存している場合はexitCodeにnull、終了していればnumber型のexit codeが代入されています。
+    プロセスが既に落ちている場合にtreeKillを実行する意味がないのでこうしてあります。
+  */
+  if (engineProcess.exitCode !== null) {
+    runEngine();
+    return;
+  }
+
+  // エンジンエラー時のエラーウィンドウ抑制用。
+  willQuitEngine = true;
+
+  /*
+    「killに使用するコマンドが終了するタイミング」と「OSがプロセスをkillするタイミング」が違うので単純にtreeKillのコールバック関数でrunEngine()を実行すると失敗します。
+    closeイベントはexitイベントよりも後に発火します。
+  */
+  const closeListenerCallBack = () => runEngine();
+  engineProcess.once("close", closeListenerCallBack);
+
+  // treeKillのコールバック関数はコマンドが終了した時に呼ばれます。
+  treeKill(engineProcess.pid, (error) => {
+    // error変数の値がnull以外であればkillコマンドが失敗したことを意味します。
+    if (error !== null) {
+      console.log(error);
+
+      // 再起動用に設定したclose listenerを削除。
+      engineProcess.removeListener("close", closeListenerCallBack);
+
+      // 何らかの理由でkillに失敗した時に起動中メッセージを消すための処理。
+      ipcMainSend(win, "DETECTED_ENGINE_ERROR");
+    }
+  });
+});
+
+ipcMainHandle("CHANGE_PIN_WINDOW", () => {
+  if (win.isAlwaysOnTop()) {
+    win.setAlwaysOnTop(false);
+  } else {
+    win.setAlwaysOnTop(true);
   }
 });
 
@@ -315,7 +394,7 @@ app.on("quit", () => {
   try {
     engineProcess.pid != undefined && treeKill(engineProcess.pid);
   } catch {
-    console.error("engine kill error");
+    logError("engine kill error");
   }
 });
 
@@ -328,11 +407,11 @@ app.on("ready", async () => {
     try {
       await installExtension(VUEJS3_DEVTOOLS);
     } catch (e) {
-      console.error("Vue Devtools failed to install:", e.toString());
+      logError("Vue Devtools failed to install:", e.toString());
     }
   }
-  createWindow();
-  runEngine();
+
+  createWindow().then(() => runEngine());
 });
 
 app.on("second-instance", () => {

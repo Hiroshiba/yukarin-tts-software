@@ -29,7 +29,7 @@ type IpcIHData = {
 
   GET_UPDATE_INFOS: {
     args: [];
-    return: Record<string, any>[];
+    return: import("@/type/preload").UpdateInfo[];
   };
 
   SHOW_AUDIO_SAVE_DIALOG: {
@@ -106,6 +106,21 @@ type IpcIHData = {
     args: [];
     return: void;
   };
+
+  LOG_ERROR: {
+    args: [...params: unknown[]];
+    return: void;
+  };
+
+  RESTART_ENGINE: {
+    args: [];
+    return: void;
+  };
+
+  CHANGE_PIN_WINDOW: {
+    args: [];
+    return: void;
+  };
 };
 
 /**
@@ -123,6 +138,26 @@ type IpcSOData = {
   };
 
   DETECT_UNMAXIMIZED: {
+    args: [];
+    return: void;
+  };
+
+  DETECTED_ENGINE_ERROR: {
+    args: [];
+    return: void;
+  };
+
+  START_WAITING_ENGINE: {
+    args: [];
+    return: void;
+  };
+
+  DETECT_PINNED: {
+    args: [];
+    return: void;
+  };
+
+  DETECT_UNPINNED: {
     args: [];
     return: void;
   };

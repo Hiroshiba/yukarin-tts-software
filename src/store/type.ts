@@ -8,7 +8,7 @@ export interface ICommand<S> {
 }
 
 export type State = {
-  isEngineReady: boolean;
+  engineState: EngineState;
   characterInfos?: CharacterInfo[];
   audioItems: Record<string, AudioItem>;
   audioKeys: string[];
@@ -22,8 +22,11 @@ export type State = {
   redoCommands: ICommand<State>[];
   useGpu: boolean;
   isHelpDialogOpen: boolean;
+  isSettingDialogOpen: boolean;
   fileEncoding: Encoding;
   isMaximized: boolean;
+  projectFilePath?: string;
+  isPinned: boolean;
 };
 
 export type AudioItem = {
@@ -36,3 +39,11 @@ export type AudioState = {
   nowPlaying: boolean;
   nowGenerating: boolean;
 };
+
+export type EngineState = "STARTING" | "FAILED_STARTING" | "ERROR" | "READY";
+export type SaveResult =
+  | "SUCCESS"
+  | "WRITE_ERROR"
+  | "ENGINE_ERROR"
+  | "CANCELED";
+export type SaveResultObject = { result: SaveResult; path: string | undefined };

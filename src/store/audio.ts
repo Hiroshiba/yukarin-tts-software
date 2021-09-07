@@ -3,12 +3,13 @@ import { StoreOptions } from "vuex";
 import path from "path";
 import { createCommandAction } from "./command";
 import { v4 as uuidv4 } from "uuid";
-import { AudioItem, State } from "./type";
+import { AudioItem, EngineState, SaveResultObject, State } from "./type";
 import { createUILockAction } from "./ui";
 import { CharacterInfo, Encoding as EncodingType } from "@/type/preload";
 import Encoding from "encoding-japanese";
 
-const api = new DefaultApi(
+// TODO: 0.5.0マイグレーションに必要
+export const api = new DefaultApi(
   new Configuration({ basePath: process.env.VUE_APP_ENGINE_URL })
 );
 
@@ -62,7 +63,7 @@ function buildFileName(state: State, audioKey: string) {
   );
 }
 
-export const SET_ENGINE_READY = "SET_ENGINE_READY";
+export const SET_ENGINE_STATE = "SET_ENGINE_STATE";
 export const START_WAITING_ENGINE = "START_WAITING_ENGINE";
 export const ACTIVE_AUDIO_KEY = "ACTIVE_AUDIO_KEY";
 export const SET_ACTIVE_AUDIO_KEY = "SET_ACTIVE_AUDIO_KEY";
@@ -79,18 +80,19 @@ export const REGISTER_AUDIO_ITEM = "REGISTER_AUDIO_ITEM";
 export const GET_AUDIO_CACHE = "GET_AUDIO_CACHE";
 export const SET_ACCENT_PHRASES = "SET_ACCENT_PHRASES";
 export const FETCH_ACCENT_PHRASES = "FETCH_ACCENT_PHRASES";
-export const FETCH_MORA_PITCH = "FETCH_MORA_PITCH";
+export const FETCH_MORA_DATA = "FETCH_MORA_DATA";
 export const HAVE_AUDIO_QUERY = "HAVE_AUDIO_QUERY";
 export const SET_AUDIO_QUERY = "SET_AUDIO_QUERY";
 export const FETCH_AUDIO_QUERY = "FETCH_AUDIO_QUERY";
 export const SET_AUDIO_SPEED_SCALE = "SET_AUDIO_SPEED_SCALE";
 export const SET_AUDIO_PITCH_SCALE = "SET_AUDIO_PITCH_SCALE";
 export const SET_AUDIO_INTONATION_SCALE = "SET_AUDIO_INTONATION_SCALE";
+export const SET_AUDIO_VOLUME_SCALE = "SET_AUDIO_VOLUME_SCALE";
 export const SET_AUDIO_ACCENT = "SET_AUDIO_ACCENT";
 export const CHANGE_ACCENT = "CHANGE_ACCENT";
 export const TOGGLE_ACCENT_PHRASE_SPLIT = "TOGGLE_ACCENT_PHRASE_SPLIT";
 export const CHANGE_ACCENT_PHRASE_SPLIT = "CHANGE_ACCENT_PHRASE_SPLIT";
-export const SET_AUDIO_MORA_PITCH = "SET_AUDIO_MORA_PITCH";
+export const SET_AUDIO_MORA_DATA = "SET_AUDIO_MORA_DATA";
 export const GENERATE_AUDIO = "GENERATE_AUDIO";
 export const GENERATE_AND_SAVE_AUDIO = "GENERATE_AND_SAVE_AUDIO";
 export const GENERATE_AND_SAVE_ALL_AUDIO = "GENERATE_AND_SAVE_ALL_AUDIO";
@@ -104,6 +106,8 @@ export const STOP_CONTINUOUSLY_AUDIO = "STOP_CONTINUOUSLY_AUDIO";
 export const SET_NOW_PLAYING_CONTINUOUSLY = "SET_NOW_PLAYING_CONTINUOUSLY";
 export const PUT_TEXTS = "PUT_TEXTS";
 export const OPEN_TEXT_EDIT_CONTEXT_MENU = "OPEN_TEXT_EDIT_CONTEXT_MENU";
+export const DETECTED_ENGINE_ERROR = "DETECTED_ENGINE_ERROR";
+export const RESTART_ENGINE = "RESTART_ENGINE";
 
 const audioBlobCache: Record<string, Blob> = {};
 const audioElements: Record<string, HTMLAudioElement> = {};
@@ -125,8 +129,8 @@ export const audioStore = {
   },
 
   mutations: {
-    [SET_ENGINE_READY](state, { isEngineReady }: { isEngineReady: boolean }) {
-      state.isEngineReady = isEngineReady;
+    [SET_ENGINE_STATE](state, { engineState }: { engineState: EngineState }) {
+      state.engineState = engineState;
     },
     [SET_CHARACTER_INFOS](
       state,
@@ -158,8 +162,14 @@ export const audioStore = {
   },
 
   actions: {
-    [START_WAITING_ENGINE]: createUILockAction(async ({ state }, _) => {
+    [START_WAITING_ENGINE]: createUILockAction(async ({ state, commit }, _) => {
+      let engineState = state.engineState;
       for (let i = 0; i < 100; i++) {
+        engineState = state.engineState;
+        if (engineState === "FAILED_STARTING") {
+          break;
+        }
+
         try {
           await api.versionVersionGet();
         } catch {
@@ -167,8 +177,13 @@ export const audioStore = {
           console.log("waiting engine...");
           continue;
         }
-        state.isEngineReady = true;
+        engineState = "READY";
+        commit(SET_ENGINE_STATE, { engineState });
         break;
+      }
+
+      if (engineState !== "READY") {
+        commit(SET_ENGINE_STATE, { engineState: "FAILED_STARTING" });
       }
     }),
     [LOAD_CHARACTER]: createUILockAction(async ({ commit }) => {
@@ -176,10 +191,12 @@ export const audioStore = {
 
       await Promise.all(
         characterInfos.map(async (characterInfo) => {
-          const buffer = await window.electron.readFile({
-            filePath: characterInfo.iconPath,
-          });
-          characterInfo.iconBlob = new Blob([buffer]);
+          const [iconBuf, portraitBuf] = await Promise.all([
+            window.electron.readFile({ filePath: characterInfo.iconPath }),
+            window.electron.readFile({ filePath: characterInfo.portraitPath }),
+          ]);
+          characterInfo.iconBlob = new Blob([iconBuf]);
+          characterInfo.portraitBlob = new Blob([portraitBuf]);
         })
       );
 
@@ -203,7 +220,7 @@ export const audioStore = {
       const haveAudioQuery = getters[HAVE_AUDIO_QUERY](audioKey);
       await dispatch(SET_AUDIO_CHARACTER_INDEX, { audioKey, characterIndex });
       if (haveAudioQuery) {
-        return dispatch(FETCH_MORA_PITCH, { audioKey });
+        return dispatch(FETCH_MORA_DATA, { audioKey });
       }
     },
     [INSERT_AUDIO_ITEM]: createCommandAction(
@@ -301,14 +318,11 @@ export const audioStore = {
           dispatch(SET_ACCENT_PHRASES, { audioKey, accentPhrases })
         );
     },
-    [FETCH_MORA_PITCH](
-      { state, dispatch },
-      { audioKey }: { audioKey: string }
-    ) {
+    [FETCH_MORA_DATA]({ state, dispatch }, { audioKey }: { audioKey: string }) {
       const audioItem = state.audioItems[audioKey];
 
       return api
-        .moraPitchMoraPitchPost({
+        .moraDataMoraDataPost({
           accentPhrase: audioItem.query!.accentPhrases,
           speaker:
             state.characterInfos![audioItem.characterIndex!].metas.speaker,
@@ -353,6 +367,12 @@ export const audioStore = {
     >((draft, { audioKey, intonationScale }) => {
       draft.audioItems[audioKey].query!.intonationScale = intonationScale;
     }),
+    [SET_AUDIO_VOLUME_SCALE]: createCommandAction<
+      State,
+      { audioKey: string; volumeScale: number }
+    >((draft, { audioKey, volumeScale }) => {
+      draft.audioItems[audioKey].query!.volumeScale = volumeScale;
+    }),
     [SET_AUDIO_ACCENT]: createCommandAction<
       State,
       {
@@ -378,7 +398,7 @@ export const audioStore = {
       }
     ) {
       await dispatch(SET_AUDIO_ACCENT, { audioKey, accentPhraseIndex, accent });
-      return dispatch(FETCH_MORA_PITCH, { audioKey });
+      return dispatch(FETCH_MORA_DATA, { audioKey });
     },
     [TOGGLE_ACCENT_PHRASE_SPLIT]: createCommandAction<
       State,
@@ -458,9 +478,9 @@ export const audioStore = {
         moraIndex,
         isPause,
       });
-      return dispatch(FETCH_MORA_PITCH, { audioKey });
+      return dispatch(FETCH_MORA_DATA, { audioKey });
     },
-    [SET_AUDIO_MORA_PITCH]: createCommandAction<
+    [SET_AUDIO_MORA_DATA]: createCommandAction<
       State,
       {
         audioKey: string;
@@ -486,6 +506,10 @@ export const audioStore = {
           .then(async (blob) => {
             audioBlobCache[id] = blob;
             return blob;
+          })
+          .catch((e) => {
+            window.electron.logError(e);
+            return null;
           });
       }
     ),
@@ -496,8 +520,12 @@ export const audioStore = {
           audioKey,
           filePath,
           encoding,
-        }: { audioKey: string; filePath?: string; encoding?: EncodingType }
-      ) => {
+        }: {
+          audioKey: string;
+          filePath?: string;
+          encoding?: EncodingType;
+        }
+      ): Promise<SaveResultObject> => {
         const blobPromise: Promise<Blob> = dispatch(GENERATE_AUDIO, {
           audioKey,
         });
@@ -505,31 +533,53 @@ export const audioStore = {
           title: "Save",
           defaultPath: buildFileName(state, audioKey),
         });
+        if (!filePath) {
+          return { result: "CANCELED", path: "" };
+        }
+
         const blob = await blobPromise;
-        if (filePath) {
+        if (!blob) {
+          return { result: "ENGINE_ERROR", path: filePath };
+        }
+
+        try {
           window.electron.writeFile({
             filePath,
             buffer: await blob.arrayBuffer(),
           });
-          const textBlob = ((): Blob => {
-            if (!encoding || encoding === "UTF-8") {
-              const bom = new Uint8Array([0xef, 0xbb, 0xbf]);
-              return new Blob([bom, state.audioItems[audioKey].text], {
-                type: "text/plain;charset=UTF-8",
-              });
-            }
-            const sjisArray = Encoding.convert(
-              Encoding.stringToCode(state.audioItems[audioKey].text),
-              { to: "SJIS", type: "arraybuffer" }
-            );
-            return new Blob([new Uint8Array(sjisArray)], {
-              type: "text/plain;charset=Shift_JIS",
+        } catch (e) {
+          window.electron.logError(e);
+
+          return { result: "WRITE_ERROR", path: filePath };
+        }
+
+        const textBlob = ((): Blob => {
+          if (!encoding || encoding === "UTF-8") {
+            const bom = new Uint8Array([0xef, 0xbb, 0xbf]);
+            return new Blob([bom, state.audioItems[audioKey].text], {
+              type: "text/plain;charset=UTF-8",
             });
-          })();
+          }
+          const sjisArray = Encoding.convert(
+            Encoding.stringToCode(state.audioItems[audioKey].text),
+            { to: "SJIS", type: "arraybuffer" }
+          );
+          return new Blob([new Uint8Array(sjisArray)], {
+            type: "text/plain;charset=Shift_JIS",
+          });
+        })();
+
+        try {
           window.electron.writeFile({
             filePath: filePath.replace(/\.wav$/, ".txt"),
             buffer: await textBlob.arrayBuffer(),
           });
+
+          return { result: "SUCCESS", path: filePath };
+        } catch (e) {
+          window.electron.logError(e);
+
+          return { result: "WRITE_ERROR", path: filePath };
         }
       }
     ),
@@ -587,13 +637,13 @@ export const audioStore = {
         let blob = await dispatch(GET_AUDIO_CACHE, { audioKey });
         if (!blob) {
           commit(SET_AUDIO_NOW_GENERATING, { audioKey, nowGenerating: true });
-          try {
-            blob = await dispatch(GENERATE_AUDIO, { audioKey });
-          } finally {
-            commit(SET_AUDIO_NOW_GENERATING, {
-              audioKey,
-              nowGenerating: false,
-            });
+          blob = await dispatch(GENERATE_AUDIO, { audioKey });
+          commit(SET_AUDIO_NOW_GENERATING, {
+            audioKey,
+            nowGenerating: false,
+          });
+          if (!blob) {
+            throw new Error();
           }
         }
         audioElem.src = URL.createObjectURL(blob);
@@ -626,15 +676,18 @@ export const audioStore = {
     },
     [PLAY_CONTINUOUSLY_AUDIO]: createUILockAction(
       async ({ state, commit, dispatch }) => {
+        const currentAudioKey = state._activeAudioKey;
         commit(SET_NOW_PLAYING_CONTINUOUSLY, { nowPlaying: true });
         try {
           for (const audioKey of state.audioKeys) {
+            commit(SET_ACTIVE_AUDIO_KEY, { audioKey });
             const isEnded = await dispatch(PLAY_AUDIO, { audioKey });
             if (!isEnded) {
               break;
             }
           }
         } finally {
+          commit(SET_ACTIVE_AUDIO_KEY, { audioKey: currentAudioKey });
           commit(SET_NOW_PLAYING_CONTINUOUSLY, { nowPlaying: false });
         }
       }
@@ -685,6 +738,22 @@ export const audioStore = {
     ),
     [OPEN_TEXT_EDIT_CONTEXT_MENU]() {
       window.electron.openTextEditContextMenu();
+    },
+    [DETECTED_ENGINE_ERROR]({ state, commit }) {
+      switch (state.engineState) {
+        case "STARTING":
+          commit(SET_ENGINE_STATE, { engineState: "FAILED_STARTING" });
+          break;
+        case "READY":
+          commit(SET_ENGINE_STATE, { engineState: "ERROR" });
+          break;
+        default:
+          commit(SET_ENGINE_STATE, { engineState: "ERROR" });
+      }
+    },
+    async [RESTART_ENGINE]({ commit }) {
+      await commit(SET_ENGINE_STATE, { engineState: "STARTING" });
+      window.electron.restartEngine();
     },
   },
 } as StoreOptions<State>;
