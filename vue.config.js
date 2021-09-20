@@ -21,7 +21,7 @@ module.exports = {
           "README_LIBRARY.txt",
           { from: ".env.production", to: ".env" },
           {
-            from: "../yukarin_tts_software_engine/run.dist/",
+            from: "../voicevox_engine/run.dist/",
             to: "",
           },
         ],
