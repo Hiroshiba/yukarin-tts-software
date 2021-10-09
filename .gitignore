@@ -39,3 +39,6 @@ public/licenses.json
 
 # release
 electron-builder.yml
+
+# generated licenses.json
+/*licenses.json

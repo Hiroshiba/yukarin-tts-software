@@ -1,0 +1,624 @@
+
+name: build
+on:
+  push:
+    branches:
+      - main
+  release:
+    types:
+      - created
+
+env:
+  VOICEVOX_ENGINE_REPO_URL: "https://github.com/Hiroshiba/voicevox_engine"
+  VOICEVOX_ENGINE_VERSION: check-2021-09-29
+
+  # FIXME: implement build with production resources in Hiroshiba/voicevox
+  # Temporarily, skip uploading to GitHub Release (use Artifact instead)
+  SKIP_UPLOADING_RELEASE_ASSET: 1
+
+jobs:
+  build-noengine-prepackage:
+    env:
+      CYPRESS_CACHE_FOLDER: ~/.npm/cypress_cache
+      ELECTRON_CACHE: .cache/electron
+      ELECTRON_BUILDER_CACHE: .cache/electron-builder
+      cache-version: v2
+    strategy:
+      fail-fast: false
+      matrix:
+        artifact_name:
+          - linux-noengine-prepackage
+          - linux-noengine-cpu-prepackage
+          - windows-noengine-prepackage
+          - windows-noengine-cpu-prepackage
+        include:
+          # Linux NVIDIA GPU
+          - artifact_name: linux-noengine-prepackage
+            artifact_path: dist_electron/linux-unpacked
+            package_name: voicevox
+            linux_artifact_name: 'VOICEVOX.${ext}'
+            linux_executable_name: voicevox
+            os: ubuntu-18.04
+          # Linux CPU
+          - artifact_name: linux-noengine-cpu-prepackage
+            artifact_path: dist_electron/linux-unpacked
+            package_name: voicevox-cpu
+            linux_artifact_name: 'VOICEVOX.${ext}'
+            linux_executable_name: voicevox
+            os: ubuntu-18.04
+          # Windows NVIDIA GPU
+          - artifact_name: windows-noengine-prepackage
+            artifact_path: dist_electron/win-unpacked
+            package_name: voicevox
+            nsis_web_artifact_name: 'VOICEVOX Web Setup ${version}.${ext}'
+            os: windows-2019
+          # Windows CPU
+          - artifact_name: windows-noengine-cpu-prepackage
+            artifact_path: dist_electron/win-unpacked
+            package_name: voicevox-cpu
+            nsis_web_artifact_name: 'VOICEVOX-CPU Web Setup ${version}.${ext}'
+            os: windows-2019
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@master
+
+      # Rename executable file
+      - name: Replace package name
+        shell: bash
+        run: |
+          # GPU: "name": "voicevox" => "name": "voicevox"
+          # CPU: "name": "voicevox" => "name": "voicevox-cpu"
+          sed -i 's/"name": "voicevox"/"name": "${{ matrix.package_name }}"/' package.json
+          # sed -i 's/productName: "VOICEVOX"/productName: "${{ matrix.product_name }}"/' vue.config.js
+
+      - name: Set output Node version
+        id: node-version
+        shell: bash
+        run: echo "::set-output name=NODE_VERSION::$(cat .node-version)"
+
+      - name: Setup Node
+        uses: actions/setup-node@master
+        with:
+          node-version: "${{ steps.node-version.outputs.NODE_VERSION }}"
+
+      - name: Cache Node packages
+        uses: actions/cache@master
+        with:
+          path: ~/.npm
+          key: ${{ env.cache-version }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ env.cache-version }}-node-
+
+      - name: Cache Electron
+        uses: actions/cache@master
+        with:
+          path: ${{ env.ELECTRON_CACHE }}
+          key: ${{ env.cache-version }}-${{ runner.os }}--electron-cache-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ env.cache-version }}-${{ runner.os }}--electron-cache-
+
+      - name: Cache Electron-Builder
+        uses: actions/cache@master
+        with:
+          path: ${{ env.ELECTRON_BUILDER_CACHE }}
+          key: ${{ env.cache-version }}-${{ runner.os }}--electron-builder-cache-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ env.cache-version }}-${{ runner.os }}--electron-builder-cache-
+
+      - name: Install dependencies
+        shell: bash
+        run: npm ci
+
+      - name: Show disk space (debug info)
+        shell: bash
+        run: |
+          df -h
+
+      - name: Overwrite .env.production for Linux
+        if: startsWith(matrix.os, 'ubuntu-')
+        shell: bash
+        run: |
+          echo "ENGINE_PATH=./run" > .env.production
+          echo "VUE_APP_ENGINE_URL=http://127.0.0.1:50021" >> .env.production
+
+      - name: Generate public/licenses.json
+        shell: bash
+        run: npm run license:generate -- -o public/licenses.json
+
+      - name: Show disk space (debug info)
+        shell: bash
+        run: |
+          df -h
+
+      # Build result will be exported to ${{ matrix.artifact_path }}
+      - name: Build Electron
+        shell: bash
+        env:
+          NSIS_WEB_ARTIFACT_NAME: ${{ matrix.nsis_web_artifact_name }}
+          LINUX_ARTIFACT_NAME: ${{ matrix.linux_artifact_name }}
+          LINUX_EXECUTABLE_NAME: ${{ matrix.linux_executable_name }}
+        run: npm run electron:build_pnever -- --dir
+
+      - name: Upload NoEngine Prepackage
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            ${{ matrix.artifact_path }}
+
+
+  build-engine-prepackage:
+    env:
+      cache-version: v2
+
+    needs: [build-noengine-prepackage]
+    strategy:
+      fail-fast: false
+      matrix:
+        # FIXME: env cannot be referenced in matrix
+        # voicevox_engine_repo_url:
+        #   - ${{ env.VOICEVOX_ENGINE_REPO_URL }}
+        # voicevox_engine_version:
+        #   - ${{ env.VOICEVOX_ENGINE_VERSION }}
+        os: [ubuntu-18.04]
+        artifact_name:
+          - linux-nvidia-prepackage
+          - linux-cpu-prepackage
+          - windows-nvidia-prepackage
+          - windows-cpu-prepackage
+        include:
+          # Linux NVIDIA GPU
+          - artifact_name: linux-nvidia-prepackage
+            noengine_artifact_name: linux-noengine-prepackage
+            voicevox_engine_asset_name: linux-nvidia
+            linux_executable_name: voicevox
+            targz_name: VOICEVOX
+          # Linux CPU
+          - artifact_name: linux-cpu-prepackage
+            noengine_artifact_name: linux-noengine-cpu-prepackage
+            voicevox_engine_asset_name: linux-cpu
+            linux_executable_name: voicevox
+            targz_name: VOICEVOX-CPU
+          # Windows NVIDIA GPU
+          - artifact_name: windows-nvidia-prepackage
+            noengine_artifact_name: windows-noengine-prepackage
+            voicevox_engine_asset_name: windows-nvidia
+          # Windows CPU
+          - artifact_name: windows-cpu-prepackage
+            noengine_artifact_name: windows-noengine-cpu-prepackage
+            voicevox_engine_asset_name: windows-cpu
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@master
+
+      - name: Set output Node version
+        id: node-version
+        shell: bash
+        run: echo "::set-output name=NODE_VERSION::$(cat .node-version)"
+
+      - name: Setup Node
+        uses: actions/setup-node@master
+        with:
+          node-version: "${{ steps.node-version.outputs.NODE_VERSION }}"
+
+      - name: Cache Node packages
+        uses: actions/cache@master
+        with:
+          path: ~/.npm
+          key: ${{ env.cache-version }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ env.cache-version }}-node-
+
+      - name: Install asar
+        shell: bash
+        run: npm install -g asar
+
+      - name: Install dependencies
+        shell: bash
+        run: npm ci
+
+      - name: Show disk space (debug info)
+        shell: bash
+        run: |
+          df -h
+
+      - name: Download and extract noengine-prepackage artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: ${{ matrix.noengine_artifact_name }}
+          path: ./prepackage
+
+      # Download VOICEVOX ENGINE
+      - name: Create directory voicevox_engine/download
+        shell: bash
+        run: |
+          mkdir -p voicevox_engine/download
+
+      # NOTE: VOICEVOX ENGINE should not be cached since it has a size of several GB
+      #       and actions/cache has a limit of 5GB per repository.
+      #       https://github.com/actions/cache#cache-limits
+      # - name: Dump VOICEVOX ENGINE repo URL to calc hash
+      #   shell: bash
+      #   run: |
+      #     echo "${{ env.VOICEVOX_ENGINE_REPO_URL }}" > voicevox_engine/repo_url.txt
+      # - name: Cache VOICEVOX ENGINE
+      #   uses: actions/cache@master
+      #   id: voicevox-engine-cache
+      #   with:
+      #     path: voicevox_engine/download
+      #     key: ${{ env.cache-version }}-voicevox-engine-${{ hashFiles('voicevox_engine/repo_url.txt') }}-${{ env.VOICEVOX_ENGINE_VERSION }}
+
+      - name: Download VOICEVOX ENGINE
+        # if: steps.voicevox-engine-cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          VOICEVOX_ENGINE_RELEASE_URL: ${{ env.VOICEVOX_ENGINE_REPO_URL }}/releases/download/${{ env.VOICEVOX_ENGINE_VERSION }}
+        run: |
+          curl -L -o "voicevox_engine/download/list.txt" "${{ env.VOICEVOX_ENGINE_RELEASE_URL }}/${{ matrix.voicevox_engine_asset_name }}.7z.txt"
+          cat "voicevox_engine/download/list.txt" | xargs -I '%' curl -L -o "voicevox_engine/download/%" "${{ env.VOICEVOX_ENGINE_RELEASE_URL }}/%"
+
+      - name: Extract VOICEVOX ENGINE
+        shell: bash
+        run: |
+          mkdir -p voicevox_engine/tmp
+
+          # Extract first file to extract all parts
+          # Destination: voicevox_engine/tmp/${{ matrix.voicevox_engine_asset_name }}/
+          7z x "voicevox_engine/download/$(cat voicevox_engine/download/list.txt | head -n1)" -ovoicevox_engine/tmp/
+
+          mkdir -p voicevox_engine/voicevox_engine
+          mv voicevox_engine/tmp/${{ matrix.voicevox_engine_asset_name }}/* voicevox_engine/voicevox_engine
+
+          # remove downloads to free space
+          rm -rf voicevox_engine/download voicevox_engine/tmp
+
+      - name: Merge licenses.json (ENGINE, VOICEVOX)
+        shell: bash
+        run: |
+          # Unpack asar
+          asar extract prepackage/resources/app.asar prepackage/resources/app
+          rm prepackage/resources/app.asar
+
+          mv voicevox_engine/voicevox_engine/licenses.json engine_licenses.json
+          npm run license:merge -- -o prepackage/resources/app/licenses.json -i engine_licenses.json -i prepackage/resources/app/licenses.json
+
+          # Repack asar
+          asar pack prepackage/resources/app prepackage/resources/app.asar
+          rm -rf prepackage/resources/app
+
+      - name: Merge VOICEVOX ENGINE into prepackage/
+        shell: bash
+        run: |
+          mv voicevox_engine/voicevox_engine/* prepackage/
+          rm -rf voicevox_engine
+
+      - name: Show disk space (debug info)
+        shell: bash
+        run: |
+          df -h
+
+      - name: Upload prepackage artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            prepackage/
+
+      - name: Recover file permissions
+        if: startsWith(matrix.artifact_name, 'linux-') # linux
+        shell: bash
+        run: |
+          chmod +x "prepackage/${{ matrix.linux_executable_name }}"
+          chmod +x "prepackage/run"
+
+      - name: Set BUILD_IDENTIFIER env var
+        if: startsWith(matrix.artifact_name, 'linux-') # linux
+        shell: bash
+        run: |
+          echo "BUILD_IDENTIFIER=${GITHUB_REF##*/}" >> $GITHUB_ENV
+
+      # Create tar.gz for Linux
+      #
+      # Due to GitHub Actions limitation (https://github.com/actions/upload-artifact/issues/38),
+      # file permissions are lost in actions/upload-artifact.
+      # To distribute binaries (voicevox, run) with execute permission,
+      # we need to pack all the files in tarball (tar.gz) before uploading.
+      # https://github.com/actions/upload-artifact/blob/11e311c8b504ea40cbed20583a64d75b4735cff3/README.md#maintaining-file-permissions-and-case-sensitive-files
+      #
+      # voicevox-x.x.x.tar.gz
+      # - VOICEVOX/
+      #   - voicevox
+      #   - run
+      #
+      - name: Create Linux tar.gz
+        if: startsWith(matrix.artifact_name, 'linux-') # linux
+        shell: bash
+        run: |
+          mv prepackage VOICEVOX
+          tar cf "${{ matrix.targz_name }}-${{ env.BUILD_IDENTIFIER }}.tar.gz" VOICEVOX/
+
+      - name: Show disk space (debug info)
+        if: startsWith(matrix.artifact_name, 'linux-') # linux
+        shell: bash
+        run: |
+          df -h
+
+      - name: Upload Linux tar.gz artifact
+        if: startsWith(matrix.artifact_name, 'linux-') # linux
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ matrix.artifact_name }}-targz
+          path: "${{ matrix.targz_name }}-${{ env.BUILD_IDENTIFIER }}.tar.gz"
+
+
+  build-distributable:
+    if: github.event.release.tag_name != '' # If release
+    needs: [build-engine-prepackage]
+    env:
+      CYPRESS_CACHE_FOLDER: ~/.npm/cypress_cache
+      ELECTRON_CACHE: .cache/electron
+      ELECTRON_BUILDER_CACHE: .cache/electron-builder
+      cache-version: v2
+    strategy:
+      fail-fast: false
+      matrix:
+        artifact_name:
+          - linux-nvidia-appimage
+          - linux-cpu-appimage
+          - windows-nvidia-nsis-web
+          - windows-cpu-nsis-web
+        include:
+          # Linux NVIDIA GPU
+          - artifact_name: linux-nvidia-appimage
+            engine_artifact_name: linux-nvidia-prepackage
+            package_name: voicevox
+            linux_artifact_name: 'VOICEVOX.${ext}'
+            linux_executable_name: voicevox
+            os: ubuntu-18.04
+          # Linux CPU
+          - artifact_name: linux-cpu-appimage
+            engine_artifact_name: linux-cpu-prepackage
+            package_name: voicevox-cpu
+            linux_artifact_name: 'VOICEVOX.${ext}'
+            linux_executable_name: voicevox
+            os: ubuntu-18.04
+          # Windows NVIDIA GPU
+          - artifact_name: windows-nvidia-nsis-web
+            engine_artifact_name: windows-nvidia-prepackage
+            package_name: voicevox
+            nsis_web_artifact_name: 'VOICEVOX Web Setup ${version}.${ext}'
+            os: windows-2019
+          # Windows CPU
+          - artifact_name: windows-cpu-nsis-web
+            engine_artifact_name: windows-cpu-prepackage
+            package_name: voicevox-cpu
+            nsis_web_artifact_name: 'VOICEVOX-CPU Web Setup ${version}.${ext}'
+            os: windows-2019
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@master
+
+      # NOTE: If the CPU/GPU builds have the same package name,
+      #       the NSIS installers and the 7z files have duplicate names.
+      #       For Linux, If they have the same product name,
+      #       the AppImages have duplicate names.
+      #       Files with the same name cannot be uploaded to a single GitHub Release,
+      #       so different package/product names should be used for CPU/GPU builds.
+      - name: Replace package name
+        shell: bash
+        run: |
+          # GPU: "name": "voicevox" => "name": "voicevox"
+          # CPU: "name": "voicevox" => "name": "voicevox-cpu"
+          sed -i 's/"name": "voicevox"/"name": "${{ matrix.package_name }}"/' package.json
+          # sed -i 's/productName: "VOICEVOX"/productName: "${{ matrix.product_name }}"/' vue.config.js
+
+      - name: Download and extract engine-prepackage artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: ${{ matrix.engine_artifact_name }}
+          path: ./prepackage
+
+      - name: Recover file permissions
+        if: endsWith(matrix.artifact_name, '-appimage') # linux
+        shell: bash
+        run: |
+          chmod +x "prepackage/${{ matrix.linux_executable_name }}"
+          chmod +x "prepackage/run"
+
+      - name: Show disk space (debug info)
+        shell: bash
+        run: |
+          df -h
+
+      - name: Set output Node version
+        id: node-version
+        shell: bash
+        run: echo "::set-output name=NODE_VERSION::$(cat .node-version)"
+
+      - name: Setup Node
+        uses: actions/setup-node@master
+        with:
+          node-version: "${{ steps.node-version.outputs.NODE_VERSION }}"
+
+      - name: Cache Node packages
+        uses: actions/cache@master
+        with:
+          path: ~/.npm
+          key: ${{ env.cache-version }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ env.cache-version }}-node-
+
+      - name: Cache Electron
+        uses: actions/cache@master
+        with:
+          path: ${{ env.ELECTRON_CACHE }}
+          key: ${{ env.cache-version }}-${{ runner.os }}--electron-cache-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ env.cache-version }}-${{ runner.os }}--electron-cache-
+
+      - name: Cache Electron-Builder
+        uses: actions/cache@master
+        with:
+          path: ${{ env.ELECTRON_BUILDER_CACHE }}
+          key: ${{ env.cache-version }}-${{ runner.os }}--electron-builder-cache-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ env.cache-version }}-${{ runner.os }}--electron-builder-cache-
+
+      - name: Install dependencies
+        shell: bash
+        run: npm ci
+
+      - name: Show disk space (debug info)
+        shell: bash
+        run: |
+          df -h
+
+      # NOTE: prepackage can be removed before splitting nsis-web archive
+      - name: Build Electron
+        shell: bash
+        env:
+          NSIS_WEB_ARTIFACT_NAME: ${{ matrix.nsis_web_artifact_name }}
+          LINUX_ARTIFACT_NAME: ${{ matrix.linux_artifact_name }}
+          LINUX_EXECUTABLE_NAME: ${{ matrix.linux_executable_name }}
+        run: npm run electron:build_pnever -- --prepackaged "prepackage/"
+
+      - name: Show disk space (debug info)
+        shell: bash
+        run: |
+          df -h
+
+      - name: Upload Linux AppImage artifact
+        if: endsWith(matrix.artifact_name, '-appimage')
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            dist_electron/*.AppImage
+
+      - name: Create Windows NSIS Web artifact directory
+        if: endsWith(matrix.artifact_name, '-nsis-web')
+        shell: bash
+        run: |
+          mkdir -p nsis-web-artifact
+          mv dist_electron/nsis-web/out/*.7z.* nsis-web-artifact/
+          mv dist_electron/nsis-web/*.exe nsis-web-artifact/
+
+      - name: Upload Windows NSIS Web artifact
+        if: endsWith(matrix.artifact_name, '-nsis-web')
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            nsis-web-artifact/*
+
+
+  upload-distributable-to-release:
+    if: github.event.release.tag_name != '' # If release
+    needs: [build-distributable]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-18.04]
+        artifact_name:
+          - linux-nvidia-appimage
+          - linux-cpu-appimage
+          - windows-nvidia-nsis-web
+          - windows-cpu-nsis-web
+        include:
+          - artifact_name: linux-nvidia-appimage
+            appimage_7z_name: VOICEVOX.AppImage
+          - artifact_name: linux-cpu-appimage
+            appimage_7z_name: VOICEVOX-CPU.AppImage
+          - artifact_name: windows-nvidia-nsis-web
+          - artifact_name: windows-cpu-nsis-web
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@master
+
+      - name: Download and extract distributable artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ./artifact
+
+      - name: Show disk space (debug info)
+        shell: bash
+        run: |
+          df -h
+
+      # Linux AppImage
+      - name: Install dependencies for Linux AppImage Upload
+        if: endsWith(matrix.artifact_name, '-appimage')
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full
+
+      - name: Split AppImage artifact
+        if: endsWith(matrix.artifact_name, '-appimage')
+        shell: bash
+        run: |
+          cd artifact/
+
+          for appImageFile in *.AppImage; do
+            echo "Splitting ${appImageFile}"
+
+            # compressed to MyArtifact.AppImage.7z.001, MyArtifact.AppImage.7z.002, ...
+            7z -v1g a "${{ matrix.appimage_7z_name }}.7z" "${appImageFile}"
+
+            # Output splitted archive name<TAB>size<TAB>hash list to myartifact.7z.txt
+            ls "${{ matrix.appimage_7z_name }}.7z".* > archives_name.txt
+            stat --printf="%s\n" "${{ matrix.appimage_7z_name }}.7z".* > archives_size.txt
+            md5sum "${{ matrix.appimage_7z_name }}.7z".* | awk '{print $1}' | tr a-z A-Z > archives_hash.txt
+
+            paste -d '\t' archives_name.txt archives_size.txt archives_hash.txt > archives.txt
+
+            mv archives.txt "${{ matrix.artifact_name }}.7z.txt"
+          done
+
+      - name: Show disk space (debug info)
+        if: endsWith(matrix.artifact_name, '-appimage')
+        shell: bash
+        run: |
+          df -h
+
+      - name: Upload Linux AppImage Release artifact
+        if: env.SKIP_UPLOADING_RELEASE_ASSET == '1' && endsWith(matrix.artifact_name, '-appimage')
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ matrix.artifact_name }}-release
+          path: |
+            artifact/*.7z.*
+
+      - name: Upload Linux AppImage splitted archives to Release assets
+        if: env.SKIP_UPLOADING_RELEASE_ASSET != '1' && endsWith(matrix.artifact_name, '-appimage')
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref }} # == github.event.release.tag_name
+          file_glob: true
+          file: artifact/*.7z.*
+
+      # Windows NSIS Web
+      # FIXME: rename archives and installer before upload to separate cpu, gpu distribution
+      - name: Upload Windows nsis-web archives to Release assets
+        if: env.SKIP_UPLOADING_RELEASE_ASSET != '1' && endsWith(matrix.artifact_name, '-nsis-web')
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref }} # == github.event.release.tag_name
+          file_glob: true
+          file: artifact/out/*.7z.*
+
+      - name: Upload Windows nsis-web installer to Release assets
+        if: env.SKIP_UPLOADING_RELEASE_ASSET != '1' && endsWith(matrix.artifact_name, '-nsis-web')
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref }} # == github.event.release.tag_name
+          file_glob: true
+          file: artifact/*.exe

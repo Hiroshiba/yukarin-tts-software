@@ -1,59 +1,78 @@
-import { StoreOptions } from "vuex";
 import { createUILockAction } from "@/store/ui";
-import { REGISTER_AUDIO_ITEM, REMOVE_ALL_AUDIO_ITEM, api } from "@/store/audio";
-import { State, AudioItem } from "@/store/type";
+import {
+  AudioItem,
+  ProjectGetters,
+  ProjectActions,
+  ProjectMutations,
+  VoiceVoxStoreOptions,
+} from "@/store/type";
 
 import Ajv, { JTDDataType } from "ajv/dist/jtd";
-
-export const CREATE_NEW_PROJECT = "NEW_PROJECT";
-export const LOAD_PROJECT_FILE = "LOAD_PROJECT_FILE";
-export const SAVE_PROJECT_FILE = "SAVE_PROJECT_FILE";
-export const PROJECT_NAME = "PROJECT_NAME";
-export const SET_PROJECT_FILEPATH = "SET_PROJECT_FILEPATH";
+import { AccentPhrase } from "@/openapi";
+import { getBaseTransformPreset } from "@vue/compiler-core";
 
 const DEFAULT_SAMPLING_RATE = 24000;
 
-export const projectStore = {
+export const projectStore: VoiceVoxStoreOptions<
+  ProjectGetters,
+  ProjectActions,
+  ProjectMutations
+> = {
   getters: {
-    [PROJECT_NAME](state) {
+    PROJECT_NAME(state) {
       return state.projectFilePath !== undefined
         ? window.electron.getBaseName({ filePath: state.projectFilePath })
         : undefined;
     },
+    IS_EDITED(state, getters) {
+      return (
+        getters.LAST_COMMAND_UNIX_MILLISEC !==
+        state.savedLastCommandUnixMillisec
+      );
+    },
   },
 
   mutations: {
-    [SET_PROJECT_FILEPATH](state, { filePath }: { filePath: string }) {
+    SET_PROJECT_FILEPATH(state, { filePath }: { filePath?: string }) {
       state.projectFilePath = filePath;
+    },
+    SET_SAVED_LAST_COMMAND_UNIX_MILLISEC(state, unixMillisec) {
+      state.savedLastCommandUnixMillisec = unixMillisec;
     },
   },
 
   actions: {
-    [CREATE_NEW_PROJECT]: createUILockAction(
+    CREATE_NEW_PROJECT: createUILockAction(
       async (context, { confirm }: { confirm?: boolean }) => {
         if (
           confirm !== false &&
+          context.getters.IS_EDITED &&
           !(await window.electron.showConfirmDialog({
             title: "警告",
             message:
-              "保存されていないプロジェクトの変更は破棄されます。\n" +
-              "よろしいですか？",
+              "プロジェクトの変更が保存されていません。\n" +
+              "変更を破棄してもよろしいですか？",
           }))
         ) {
           return;
         }
 
-        await context.dispatch(REMOVE_ALL_AUDIO_ITEM, {});
+        await context.dispatch("REMOVE_ALL_AUDIO_ITEM", undefined);
 
-        const audioItem: AudioItem = { text: "", characterIndex: 0 };
-        await context.dispatch(REGISTER_AUDIO_ITEM, {
+        const audioItem: AudioItem = await context.dispatch(
+          "GENERATE_AUDIO_ITEM",
+          {}
+        );
+        await context.dispatch("REGISTER_AUDIO_ITEM", {
           audioItem,
         });
 
-        context.commit(SET_PROJECT_FILEPATH, { filePath: undefined });
+        context.commit("SET_PROJECT_FILEPATH", { filePath: undefined });
+        context.commit("SET_SAVED_LAST_COMMAND_UNIX_MILLISEC", null);
+        context.commit("CLEAR_COMMANDS");
       }
     ),
-    [LOAD_PROJECT_FILE]: createUILockAction(
+    LOAD_PROJECT_FILE: createUILockAction(
       async (
         context,
         { filePath, confirm }: { filePath?: string; confirm?: boolean }
@@ -136,14 +155,12 @@ export const projectStore = {
               console.log("ktkt");
 
               // set phoneme length
-              await api
-                .moraDataMoraDataPost({
-                  accentPhrase: audioItem.query!.accentPhrases,
-                  speaker:
-                    context.state.characterInfos![audioItem.characterIndex!]
-                      .metas.speaker,
+              await context
+                .dispatch("FETCH_MORA_DATA", {
+                  accentPhrases: audioItem.query!.accentPhrases,
+                  speaker: audioItem.speaker!,
                 })
-                .then((accentPhrases) => {
+                .then((accentPhrases: AccentPhrase[]) => {
                   accentPhrases.forEach((newAccentPhrase, i) => {
                     const oldAccentPhrase = audioItem.query.accentPhrases[i];
                     if (newAccentPhrase.pauseMora) {
@@ -162,6 +179,23 @@ export const projectStore = {
             }
           }
 
+          if (appVersionList < [0, 7, 0]) {
+            for (const audioItemsKey in obj.audioItems) {
+              const audioItem = obj.audioItems[audioItemsKey];
+              if (audioItem.characterIndex != null) {
+                if (audioItem.characterIndex == 0) {
+                  // 四国めたん 0 -> 四国めたん(あまあま) 0
+                  audioItem.speaker = 0;
+                }
+                if (audioItem.characterIndex == 1) {
+                  // ずんだもん 1 -> ずんだもん(あまあま) 1
+                  audioItem.speaker = 1;
+                }
+                delete audioItem.characterIndex;
+              }
+            }
+          }
+
           // Validation check
           const ajv = new Ajv();
           const validate = ajv.compile(projectSchema);
@@ -176,38 +210,41 @@ export const projectStore = {
           }
           if (
             !obj.audioKeys.every(
-              (audioKey) => obj.audioItems[audioKey].characterIndex != undefined
+              (audioKey) => obj.audioItems[audioKey].speaker != undefined
             )
           ) {
             throw new Error(
-              'Every audioItem should have a "characterIndex" attribute.'
+              'Every audioItem should have a "speaker" attribute.'
             );
           }
 
           if (
             confirm !== false &&
+            context.getters.IS_EDITED &&
             !(await window.electron.showConfirmDialog({
               title: "警告",
               message:
                 "プロジェクトをロードすると現在のプロジェクトは破棄されます。\n" +
-                "よろしいですか？",
+                "変更を破棄してもよろしいですか？",
             }))
           ) {
             return;
           }
-          await context.dispatch(REMOVE_ALL_AUDIO_ITEM);
+          await context.dispatch("REMOVE_ALL_AUDIO_ITEM", undefined);
 
           const { audioItems, audioKeys } = obj as ProjectType;
 
           let prevAudioKey = undefined;
           for (const audioKey of audioKeys) {
             const audioItem = audioItems[audioKey];
-            prevAudioKey = await context.dispatch(REGISTER_AUDIO_ITEM, {
+            prevAudioKey = await context.dispatch("REGISTER_AUDIO_ITEM", {
               prevAudioKey,
               audioItem,
             });
           }
-          context.commit(SET_PROJECT_FILEPATH, { filePath });
+          context.commit("SET_PROJECT_FILEPATH", { filePath });
+          context.commit("SET_SAVED_LAST_COMMAND_UNIX_MILLISEC", null);
+          context.commit("CLEAR_COMMANDS");
         } catch (err) {
           window.electron.logError(err);
           const message = (() => {
@@ -224,7 +261,7 @@ export const projectStore = {
         }
       }
     ),
-    [SAVE_PROJECT_FILE]: createUILockAction(
+    SAVE_PROJECT_FILE: createUILockAction(
       async (context, { overwrite }: { overwrite?: boolean }) => {
         let filePath = context.state.projectFilePath;
         if (!overwrite || !filePath) {
@@ -249,13 +286,17 @@ export const projectStore = {
         ).buffer;
         window.electron.writeFile({ filePath, buffer: buf });
         if (!context.state.projectFilePath) {
-          context.commit(SET_PROJECT_FILEPATH, { filePath });
+          context.commit("SET_PROJECT_FILEPATH", { filePath });
         }
+        context.commit(
+          "SET_SAVED_LAST_COMMAND_UNIX_MILLISEC",
+          context.getters.LAST_COMMAND_UNIX_MILLISEC
+        );
         return;
       }
     ),
   },
-} as StoreOptions<State>;
+};
 
 const moraSchema = {
   properties: {
@@ -306,7 +347,7 @@ const audioItemSchema = {
     text: { type: "string" },
   },
   optionalProperties: {
-    characterIndex: { type: "int32" },
+    speaker: { type: "int32" },
     query: audioQuerySchema,
   },
 } as const;

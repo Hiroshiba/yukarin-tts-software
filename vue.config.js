@@ -1,5 +1,19 @@
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const path = require("path");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const process = require("process");
+
+const VOICEVOX_ENGINE_DIR =
+  process.env.VOICEVOX_ENGINE_DIR ?? "../voicevox_engine/run.dist/";
+
+// ${productName} Web Setup ${version}.${ext}
+const NSIS_WEB_ARTIFACT_NAME = process.env.NSIS_WEB_ARTIFACT_NAME;
+
+// ${productName}-${version}.${ext}
+const LINUX_ARTIFACT_NAME = process.env.LINUX_ARTIFACT_NAME;
+
+// ${packageName}
+const LINUX_EXECUTABLE_NAME = process.env.LINUX_EXECUTABLE_NAME;
 
 module.exports = {
   configureWebpack: {
@@ -21,7 +35,7 @@ module.exports = {
           "README_LIBRARY.txt",
           { from: ".env.production", to: ".env" },
           {
-            from: "../voicevox_engine/run.dist/",
+            from: VOICEVOX_ENGINE_DIR,
             to: "",
           },
         ],
@@ -32,7 +46,7 @@ module.exports = {
         afterAllArtifactBuild: path.resolve(
           __dirname,
           "build",
-          "splitResources.js"
+          "afterAllArtifactBuild.js"
         ),
         win: {
           icon: "public/icon.png",
@@ -43,7 +57,13 @@ module.exports = {
             },
           ],
         },
+        directories: {
+          buildResources: "build",
+        },
         nsisWeb: {
+          artifactName:
+            NSIS_WEB_ARTIFACT_NAME !== "" ? NSIS_WEB_ARTIFACT_NAME : undefined,
+          include: "build/installer.nsh",
           oneClick: false,
           allowToChangeInstallationDirectory: true,
         },
@@ -51,6 +71,20 @@ module.exports = {
           provider: "github",
           repo: "voicevox",
           vPrefixedTagName: false,
+        },
+        linux: {
+          artifactName:
+            LINUX_ARTIFACT_NAME !== "" ? LINUX_ARTIFACT_NAME : undefined,
+          executableName:
+            LINUX_EXECUTABLE_NAME !== "" ? LINUX_EXECUTABLE_NAME : undefined,
+          icon: "public/icon.png",
+          category: "AudioVideo",
+          target: [
+            {
+              target: "AppImage",
+              arch: ["x64"],
+            },
+          ],
         },
       },
     },

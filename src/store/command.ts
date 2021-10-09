@@ -1,8 +1,14 @@
-import { Action, StoreOptions } from "vuex";
-
-import { enablePatches, enableMapSet, Patch, Draft, Immer } from "immer";
+import { toRaw } from "vue";
+import { enablePatches, enableMapSet, Patch, Immer } from "immer";
 import { applyPatch, Operation } from "rfc6902";
-import { State, Command } from "./type";
+import {
+  Command,
+  CommandGetters,
+  CommandActions,
+  CommandMutations,
+  VoiceVoxStoreOptions,
+} from "./type";
+import { Mutation, MutationsBase, MutationTree } from "@/store/vuex";
 
 enablePatches();
 enableMapSet();
@@ -10,89 +16,10 @@ enableMapSet();
 const immer = new Immer();
 immer.setAutoFreeze(false);
 
-export const CAN_UNDO = "CAN_UNDO";
-export const CAN_REDO = "CAN_REDO";
-
-/**
- * @deprecated Action中でのCommandの作成はバグを含むので非推奨になっています。
- * 代わりに`createCommandMutationTree`, `createCommandMutation`を使用して下さい。
- * */
-export const OLD_PUSH_COMMAND = "OLD_PUSH_COMMAND";
-export const UNDO = "UNDO";
-export const REDO = "REDO";
-export const CLEAR_COMMANDS = "CLEAR_COMMANDS";
-
-/**
- * @deprecated Action中でのCommandの作成はバグを含むので非推奨になっています。
- * 代わりに`createCommandMutationTree`, `createCommandMutation`を使用して下さい。
- * */
-class OldCommand<S> {
-  undoOperations: Operation[];
-  redoOperations: Operation[];
-
-  constructor(state: S, recipe: (draft: Draft<S>) => void) {
-    const [_, redoPatches, undoPatches] = immer.produceWithPatches(
-      state,
-      recipe
-    );
-    this.undoOperations = OldCommand.convertPatches(undoPatches);
-    this.redoOperations = OldCommand.convertPatches(redoPatches);
-  }
-
-  static redo<S>(state: S, command: OldCommand<S>) {
-    applyPatch(state, command.redoOperations);
-  }
-  static undo<S>(state: S, command: OldCommand<S>) {
-    applyPatch(state, command.undoOperations);
-  }
-
-  static convertPatches(patches: Patch[]) {
-    return patches.map((patch) => {
-      const operation: Operation = {
-        op: patch.op,
-        path: `/${patch.path.join("/")}`,
-        value: patch.value,
-      };
-      return operation;
-    });
-  }
-}
-
-/**
- * @deprecated Action中でのCommandの作成はバグを含むので非推奨になっています。
- * 代わりに`createCommandMutationTree`, `createCommandMutation`を使用して下さい。
- * */
-type OldCommandFactory<S, P> = (state: S, payload: P) => OldCommand<S>;
-
-/**
- * @deprecated Action中でのCommandの作成はバグを含むので非推奨になっています。
- * 代わりに`createCommandMutationTree`, `createCommandMutation`を使用して下さい。
- * */
-const oldCreateCommandFactory =
-  <S, P>(
-    recipeWithPayload: (draft: Draft<S>, payload: P) => void
-  ): OldCommandFactory<S, P> =>
-  (state, payload) =>
-    new OldCommand(state, (draft) => recipeWithPayload(draft, payload));
-
-/**
- * @deprecated Action中でのCommandの作成はバグを含むので非推奨になっています。
- * 代わりに`createCommandMutationTree`, `createCommandMutation`を使用して下さい。
- * */
-export function oldCreateCommandAction<S, P>(
-  recipeWithPayload: (draft: Draft<S>, payload: P) => void
-): Action<S, S> {
-  const commandFactory = oldCreateCommandFactory(recipeWithPayload);
-  return ({ state, commit }, payload: P) => {
-    commit(OLD_PUSH_COMMAND, { command: commandFactory(state, payload) });
-  };
-}
-
-export type PayloadRecipe<S, P extends Record<string, unknown> | undefined> = (
-  draft: Draft<S>,
-  payload: P
-) => void;
-export type PayloadRecipeTree<S> = Record<string, PayloadRecipe<S, any>>;
+export type PayloadRecipe<S, P> = (draft: S, payload: P) => void;
+export type PayloadRecipeTree<S, M> = {
+  [K in keyof M]: PayloadRecipe<S, M[K]>;
+};
 export type PayloadMutation<S, P extends Record<string, unknown> | undefined> =
   (state: S, payload: P) => void;
 export type PayloadMutationTree<S> = Record<string, PayloadMutation<S, any>>;
@@ -100,53 +27,45 @@ export type PayloadMutationTree<S> = Record<string, PayloadMutation<S, any>>;
 interface UndoRedoState {
   undoCommands: Command[];
   redoCommands: Command[];
+  useUndoRedo: boolean;
 }
-
-type CreatePayloadMutationTree<
-  S extends UndoRedoState,
-  Arg extends PayloadRecipeTree<S>
-> = {
-  [K in keyof Arg]: Arg[K] extends PayloadRecipe<S, infer P>
-    ? PayloadMutation<S, P>
-    : PayloadMutation<S, undefined>;
-};
 
 /**
  * レシピをプロパティに持つオブジェクトから操作を記録するMutationをプロパティにもつオブジェクトを返す関数
- * @see {@link recordOperations} - 返されるMutationはStateのスナップショットを撮ります.
- * これはパフォーマンス上のボトルネックを引き起こし得ます。
  * @param payloadRecipeTree - レシピをプロパティに持つオブジェクト
  * @returns Mutationを持つオブジェクト(MutationTree)
  */
 export const createCommandMutationTree = <
   S extends UndoRedoState,
-  Arg extends PayloadRecipeTree<S>
+  M extends MutationsBase
 >(
-  payloadRecipeTree: Arg
-): CreatePayloadMutationTree<S, Arg> =>
+  payloadRecipeTree: PayloadRecipeTree<S, M>
+): MutationTree<S, M> =>
   Object.fromEntries(
     Object.entries(payloadRecipeTree).map(([key, val]) => [
       key,
       createCommandMutation(val),
     ])
-  ) as CreatePayloadMutationTree<S, Arg>;
+  ) as MutationTree<S, M>;
 
 /**
  * 与えられたレシピから操作を記録し実行後にStateに追加するMutationを返す。
- * @see {@link recordOperations} - 返されるMutationはStateのスナップショットを撮ります.
- * これはパフォーマンス上のボトルネックを引き起こし得ます。
  * @param payloadRecipe - 操作を記録するレシピ
  * @returns レシピと同じPayloadの型を持つMutation.
  */
 export const createCommandMutation =
-  <S extends UndoRedoState, P extends Record<string, unknown> | undefined>(
+  <S extends UndoRedoState, P>(
     payloadRecipe: PayloadRecipe<S, P>
-  ): PayloadMutation<S, P> =>
+  ): Mutation<S, P> =>
   (state: S, payload: P): void => {
-    const command = recordOperations(payloadRecipe)(state, payload);
-    applyPatch(state, command.redoOperations);
-    state.undoCommands.push(command);
-    state.redoCommands.splice(0);
+    if (state.useUndoRedo) {
+      const command = recordOperations(payloadRecipe)(state, payload);
+      applyPatch(state, command.redoOperations);
+      state.undoCommands.push(command);
+      state.redoCommands.splice(0);
+    } else {
+      payloadRecipe(state, payload);
+    }
   };
 
 const patchToOperation = (patch: Patch): Operation => ({
@@ -156,67 +75,71 @@ const patchToOperation = (patch: Patch): Operation => ({
 });
 
 /**
- * この関数はStateのスナップショットを撮ります. これはパフォーマンス上のボトルネックを引き起こし得ます。
  * @param recipe - 操作を記録したいレシピ関数
  * @returns Function - レシピの操作を与えられたstateとpayloadを用いて記録したコマンドを返す関数。
  */
 const recordOperations =
-  <S, P extends Record<string, unknown> | undefined>(
-    recipe: PayloadRecipe<S, P>
-  ) =>
+  <S, P>(recipe: PayloadRecipe<S, P>) =>
   (state: S, payload: P): Command => {
     const [_, doPatches, undoPatches] = immer.produceWithPatches(
-      // Taking snapshots has negative effects on performance.
-      // This approach may cause a bottleneck.
-      JSON.parse(JSON.stringify(state)) as State,
-      (draft: Draft<S>) => recipe(draft, payload)
+      toRaw(state) as S,
+      (draft: S) => recipe(draft, payload)
     );
     return {
+      unixMillisec: new Date().getTime(),
       redoOperations: doPatches.map(patchToOperation),
       undoOperations: undoPatches.map(patchToOperation),
     };
   };
 
-export const commandStore = {
+export const commandStore: VoiceVoxStoreOptions<
+  CommandGetters,
+  CommandActions,
+  CommandMutations
+> = {
   getters: {
-    [CAN_UNDO](state) {
+    CAN_UNDO(state) {
       return state.undoCommands.length > 0;
     },
-    [CAN_REDO](state) {
+    CAN_REDO(state) {
       return state.redoCommands.length > 0;
+    },
+    LAST_COMMAND_UNIX_MILLISEC(state) {
+      if (state.undoCommands.length === 0) {
+        return null;
+      } else {
+        return state.undoCommands[state.undoCommands.length - 1].unixMillisec;
+      }
     },
   },
 
   mutations: {
-    [OLD_PUSH_COMMAND](state, { command }: { command: OldCommand<State> }) {
-      OldCommand.redo(state, command);
-    },
-    [UNDO]: (state) => {
+    UNDO(state) {
       const command = state.undoCommands.pop();
       if (command != null) {
         state.redoCommands.push(command);
         applyPatch(state, command.undoOperations);
       }
     },
-    [REDO]: (state) => {
+    REDO(state) {
       const command = state.redoCommands.pop();
       if (command != null) {
         state.undoCommands.push(command);
         applyPatch(state, command.redoOperations);
       }
     },
-    [CLEAR_COMMANDS]: (state) => {
+    CLEAR_COMMANDS(state) {
       state.redoCommands.splice(0);
       state.undoCommands.splice(0);
     },
   },
 
   actions: {
-    [UNDO]: ({ commit }) => {
-      commit(UNDO);
+    UNDO({ commit }) {
+      commit("UNDO");
     },
-    [REDO]: ({ commit }) => {
-      commit(REDO);
+    REDO({ commit }) {
+      commit("REDO");
     },
   },
-} as StoreOptions<State>;
+};
