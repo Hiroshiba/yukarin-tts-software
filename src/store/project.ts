@@ -132,8 +132,6 @@ export const projectStore: VoiceVoxStoreOptions<
             }
           }
 
-          console.log(appVersionList);
-
           if (appVersionList < [0, 5, 0]) {
             for (const audioItemsKey in obj.audioItems) {
               const audioItem = obj.audioItems[audioItemsKey];
@@ -150,32 +148,30 @@ export const projectStore: VoiceVoxStoreOptions<
                     mora.vowelLength = 0;
                   }
                 }
-              }
 
-              console.log("ktkt");
-
-              // set phoneme length
-              await context
-                .dispatch("FETCH_MORA_DATA", {
-                  accentPhrases: audioItem.query!.accentPhrases,
-                  speaker: audioItem.speaker!,
-                })
-                .then((accentPhrases: AccentPhrase[]) => {
-                  accentPhrases.forEach((newAccentPhrase, i) => {
-                    const oldAccentPhrase = audioItem.query.accentPhrases[i];
-                    if (newAccentPhrase.pauseMora) {
-                      oldAccentPhrase.pauseMora.vowelLength =
-                        newAccentPhrase.pauseMora.vowelLength;
-                    }
-                    newAccentPhrase.moras.forEach((mora, j) => {
-                      if (mora.consonant) {
-                        oldAccentPhrase.moras[j].consonantLength =
-                          mora.consonantLength;
+                // set phoneme length
+                await context
+                  .dispatch("FETCH_MORA_DATA", {
+                    accentPhrases: audioItem.query.accentPhrases,
+                    speaker: audioItem.characterIndex!,
+                  })
+                  .then((accentPhrases: AccentPhrase[]) => {
+                    accentPhrases.forEach((newAccentPhrase, i) => {
+                      const oldAccentPhrase = audioItem.query.accentPhrases[i];
+                      if (newAccentPhrase.pauseMora) {
+                        oldAccentPhrase.pauseMora.vowelLength =
+                          newAccentPhrase.pauseMora.vowelLength;
                       }
-                      oldAccentPhrase.moras[j].vowelLength = mora.vowelLength;
+                      newAccentPhrase.moras.forEach((mora, j) => {
+                        if (mora.consonant) {
+                          oldAccentPhrase.moras[j].consonantLength =
+                            mora.consonantLength;
+                        }
+                        oldAccentPhrase.moras[j].vowelLength = mora.vowelLength;
+                      });
                     });
                   });
-                });
+              }
             }
           }
 
