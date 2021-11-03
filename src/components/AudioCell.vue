@@ -1,21 +1,38 @@
 <template>
   <div class="audio-cell">
+    <q-icon
+      v-if="isActiveAudioCell"
+      name="arrow_right"
+      color="primary"
+      size="sm"
+      class="absolute active-arrow"
+    />
     <q-btn flat class="q-pa-none character-button" :disable="uiLocked">
       <!-- q-imgだとdisableのタイミングで点滅する -->
-      <img class="q-pa-none q-ma-none" :src="characterIconUrl" />
-      <q-menu class="character-menu">
+      <img class="q-pa-none q-ma-none" :src="selectedStyle.iconPath" />
+      <q-menu
+        class="character-menu"
+        transition-show="none"
+        transition-hide="none"
+      >
         <q-list>
           <q-item
-            v-for="(characterInfo, index) in characterInfos"
-            :key="index"
+            v-for="(characterInfo, characterIndex) in characterInfos"
+            :key="characterIndex"
             clickable
             v-close-popup
             active-class="selected-character-item"
             :active="
-              characterInfo.metas.speaker ===
-              selectedCharacterInfo.metas.speaker
+              characterInfo.metas.speakerUuid ===
+              selectedCharacterInfo.metas.speakerUuid
             "
-            @click="changeSpeaker(characterInfo.metas.speaker)"
+            @click="
+              changeStyleId(
+                getDefaultStyle(characterInfo.metas.speakerUuid).styleId
+              )
+            "
+            @mouseover="reassignSubMenuOpen(characterIndex)"
+            @mouseleave="reassignSubMenuOpen.cancel()"
           >
             <q-item-section avatar>
               <q-avatar rounded size="2rem">
@@ -23,11 +40,58 @@
                   no-spinner
                   no-transition
                   :ratio="1"
-                  :src="getCharacterIconUrl(characterInfo)"
+                  :src="
+                    getDefaultStyle(characterInfo.metas.speakerUuid).iconPath
+                  "
                 />
               </q-avatar>
             </q-item-section>
-            <q-item-section>{{ characterInfo.metas.name }}</q-item-section>
+            <q-item-section>{{
+              characterInfo.metas.speakerName
+            }}</q-item-section>
+            <q-item-section side>
+              <q-icon name="keyboard_arrow_right" />
+            </q-item-section>
+
+            <q-menu
+              anchor="top end"
+              self="top start"
+              transition-show="none"
+              transition-hide="none"
+              class="character-menu"
+              v-model="subMenuOpenFlags[characterIndex]"
+            >
+              <q-list>
+                <q-item
+                  v-for="(style, styleIndex) in characterInfo.metas.styles"
+                  :key="styleIndex"
+                  clickable
+                  v-close-popup
+                  active-class="selected-character-item"
+                  :active="style.styleId === selectedStyle.styleId"
+                  @click="changeStyleId(style.styleId)"
+                >
+                  <q-item-section avatar>
+                    <q-avatar rounded size="2rem">
+                      <q-img
+                        no-spinner
+                        no-transition
+                        :ratio="1"
+                        :src="characterInfo.metas.styles[styleIndex].iconPath"
+                      />
+                    </q-avatar>
+                  </q-item-section>
+                  <q-item-section v-if="style.styleName"
+                    >{{ characterInfo.metas.speakerName }} ({{
+                      style.styleName
+                    }})</q-item-section
+                  >
+                  <q-item-section v-else>{{
+                    characterInfo.metas.speakerName
+                  }}</q-item-section>
+                </q-item>
+              </q-list>
+            </q-menu>
           </q-item>
         </q-list>
       </q-menu>
@@ -42,14 +106,11 @@
       :error="audioTextBuffer.length >= 80"
       :model-value="audioTextBuffer"
       @update:model-value="setAudioTextBuffer"
-      @change="willRemove || pushAudioText($event)"
+      @change="willRemove || pushAudioText()"
       @paste="pasteOnAudioCell"
       @focus="setActiveAudioKey()"
-      @keydown.shift.delete.exact="removeCell"
       @keydown.prevent.up.exact="moveUpCell"
       @keydown.prevent.down.exact="moveDownCell"
-      @keydown.shift.enter.exact="addCellBellow"
-      @keyup.escape.exact="blurCell($event)"
       @mouseup.right="onRightClickTextField"
     >
       <template v-slot:error>
@@ -71,11 +132,10 @@
 </template>
 
 <script lang="ts">
-import { computed, watch, defineComponent, onMounted, ref } from "vue";
+import { computed, watch, defineComponent, ref } from "vue";
 import { useStore } from "@/store";
 import { AudioItem } from "@/store/type";
-import { CharacterInfo } from "@/type/preload";
-import { QInput } from "quasar";
+import { QInput, debounce } from "quasar";
 
 export default defineComponent({
   name: "AudioCell",
@@ -100,15 +160,34 @@ export default defineComponent({
     const uiLocked = computed(() => store.getters.UI_LOCKED);
 
     const selectedCharacterInfo = computed(() =>
-      characterInfos.value != undefined && audioItem.value.speaker != undefined
-        ? characterInfos.value.find(
-            (info) => info.metas.speaker == audioItem.value.speaker
+      store.state.characterInfos !== undefined &&
+      audioItem.value.styleId !== undefined
+        ? store.state.characterInfos.find((info) =>
+            info.metas.styles.find(
+              (style) => style.styleId === audioItem.value.styleId
+            )
           )
         : undefined
     );
+    const selectedStyle = computed(() =>
+      selectedCharacterInfo.value?.metas.styles.find(
+        (style) => style.styleId === audioItem.value.styleId
+      )
+    );
 
-    const characterIconUrl = computed(() =>
-      URL.createObjectURL(selectedCharacterInfo.value?.iconBlob)
+    const subMenuOpenFlags = ref(
+      [...Array(characterInfos.value?.length)].map(() => false)
+    );
+
+    const reassignSubMenuOpen = debounce((idx: number) => {
+      if (subMenuOpenFlags.value[idx]) return;
+      const arr = [...Array(characterInfos.value?.length)].map(() => false);
+      arr[idx] = true;
+      subMenuOpenFlags.value = arr;
+    }, 100);
+
+    const isActiveAudioCell = computed(
+      () => props.audioKey === store.getters.ACTIVE_AUDIO_KEY
     );
 
     const audioTextBuffer = ref(audioItem.value.text);
@@ -117,6 +196,7 @@ export default defineComponent({
       audioTextBuffer.value = text;
       isChangeFlag.value = true;
     };
+
     watch(
       // `audioItem` becomes undefined just before the component is unmounted.
       () => audioItem.value?.text,
@@ -127,7 +207,7 @@ export default defineComponent({
       }
     );
 
-    const pushAudioText = async (text: string) => {
+    const pushAudioText = async () => {
       if (isChangeFlag.value) {
         isChangeFlag.value = false;
         await store.dispatch("COMMAND_CHANGE_AUDIO_TEXT", {
@@ -137,11 +217,23 @@ export default defineComponent({
       }
     };
 
-    const changeSpeaker = (speaker: number) => {
-      store.dispatch("COMMAND_CHANGE_SPEAKER", {
+    const changeStyleId = (styleId: number) => {
+      store.dispatch("COMMAND_CHANGE_STYLE_ID", {
         audioKey: props.audioKey,
-        speaker,
+        styleId,
       });
+    };
+    const getDefaultStyle = (speakerUuid: string) => {
+      const characterInfo = characterInfos.value?.find(
+        (info) => info.metas.speakerUuid === speakerUuid
+      );
+      const defaultStyleId = store.state.defaultStyleIds.find(
+        (x) => x.speakerUuid === speakerUuid
+      )?.defaultStyleId;
+
+      return characterInfo?.metas.styles.find(
+        (style) => style.styleId === defaultStyleId
+      );
     };
     const setActiveAudioKey = () => {
       store.dispatch("SET_ACTIVE_AUDIO_KEY", { audioKey: props.audioKey });
@@ -175,12 +267,14 @@ export default defineComponent({
             const text = texts.shift();
             if (text == undefined) return;
             setAudioTextBuffer(text);
-            await pushAudioText(text);
+            await pushAudioText();
           }
 
+          const styleId = audioItem.value.styleId;
+          if (styleId == undefined) throw new Error("styleId == undefined");
           const audioKeys = await store.dispatch("COMMAND_PUT_TEXTS", {
             texts,
-            speaker: audioItem.value.speaker!,
+            styleId,
             prevAudioKey,
           });
           if (audioKeys)
@@ -242,8 +336,8 @@ export default defineComponent({
 
     // 下にセルを追加
     const addCellBellow = async () => {
-      const speaker = store.state.audioItems[props.audioKey].speaker;
-      const audioItem: AudioItem = { text: "", speaker: speaker };
+      const styleId = store.state.audioItems[props.audioKey].styleId;
+      const audioItem: AudioItem = { text: "", styleId };
       await store.dispatch("COMMAND_REGISTER_AUDIO_ITEM", {
         audioItem,
         prevAudioKey: props.audioKey,
@@ -270,21 +364,6 @@ export default defineComponent({
     // キャラクター選択
     const isOpenedCharacterList = ref(false);
 
-    const getCharacterIconUrl = computed(
-      () => (characterInfo: CharacterInfo) =>
-        URL.createObjectURL(characterInfo.iconBlob)
-    );
-
-    // 初期化
-    onMounted(() => {
-      // TODO: hotfix用のコード https://github.com/Hiroshiba/voicevox/issues/139
-      if (audioItem.value.query == undefined) {
-        store.dispatch("FETCH_AND_SET_AUDIO_QUERY", {
-          audioKey: props.audioKey,
-        });
-      }
-    });
-
     return {
       characterInfos,
       audioItem,
@@ -293,11 +372,15 @@ export default defineComponent({
       nowPlaying,
       nowGenerating,
       selectedCharacterInfo,
-      characterIconUrl,
+      selectedStyle,
+      subMenuOpenFlags,
+      reassignSubMenuOpen,
+      isActiveAudioCell,
       audioTextBuffer,
       setAudioTextBuffer,
       pushAudioText,
-      changeSpeaker,
+      changeStyleId,
+      getDefaultStyle,
       setActiveAudioKey,
       save,
       play,
@@ -314,7 +397,6 @@ export default defineComponent({
       focusTextField,
       blurCell,
       isOpenedCharacterList,
-      getCharacterIconUrl,
     };
   },
 });
@@ -327,6 +409,10 @@ export default defineComponent({
   display: flex;
   margin: 1rem 1rem;
   gap: 0px 1rem;
+  .active-arrow {
+    left: -5px;
+    height: 2rem;
+  }
   .character-button {
     border: solid 1px;
     border-color: global.$primary;

@@ -3,9 +3,11 @@ import { IpcRenderer, IpcRendererEvent } from "electron";
 export interface Sandbox {
   getAppInfos(): Promise<AppInfos>;
   getCharacterInfos(): Promise<CharacterInfo[]>;
+  getHowToUseText(): Promise<string>;
   getPolicyText(): Promise<string>;
   getOssLicenses(): Promise<Record<string, string>[]>;
   getUpdateInfos(): Promise<UpdateInfo[]>;
+  getOssCommunityInfos(): Promise<string>;
   saveTempAudioFile(obj: { relativePath: string; buffer: ArrayBuffer }): void;
   loadTempFile(): Promise<string>;
   getBaseName(obj: { filePath: string }): string;
@@ -30,6 +32,7 @@ export interface Sandbox {
   readFile(obj: { filePath: string }): Promise<ArrayBuffer>;
   openTextEditContextMenu(): Promise<void>;
   useGpu(newValue?: boolean): Promise<boolean>;
+  inheritAudioInfo(newValue?: boolean): Promise<boolean>;
   isAvailableGPUMode(): Promise<boolean>;
   onReceivedIPCMsg<T extends keyof IpcSOData>(
     channel: T,
@@ -42,8 +45,15 @@ export interface Sandbox {
   logInfo(...params: unknown[]): void;
   restartEngine(): Promise<void>;
   savingSetting(newData?: SavingSetting): Promise<SavingSetting>;
+  hotkeySettings(newData?: HotkeySetting): Promise<HotkeySetting[]>;
   checkFileExists(file: string): Promise<boolean>;
   changePinWindow(): void;
+  isUnsetDefaultStyleIds(): Promise<boolean>;
+  getDefaultStyleIds(): Promise<DefaultStyleId[]>;
+  setDefaultStyleIds(
+    defaultStyleIds: { speakerUuid: string; defaultStyleId: number }[]
+  ): Promise<void>;
+  useVoicing(newData?: boolean): Promise<boolean>;
 }
 
 export type AppInfos = {
@@ -51,15 +61,25 @@ export type AppInfos = {
   version: string;
 };
 
-export type CharacterInfo = {
-  dirPath: string;
+export type StyleInfo = {
+  styleName?: string;
+  styleId: number;
   iconPath: string;
+  voiceSamplePaths: string[];
+};
+
+export type MetasJson = {
+  speakerName: string;
+  speakerUuid: string;
+  styles: Pick<StyleInfo, "styleName" | "styleId">[];
+};
+
+export type CharacterInfo = {
   portraitPath: string;
-  iconBlob?: Blob;
-  portraitBlob?: Blob;
   metas: {
-    name: string;
-    speaker: number;
+    speakerUuid: string;
+    speakerName: string;
+    styles: StyleInfo[];
     policy: string;
   };
 };
@@ -78,4 +98,52 @@ export type SavingSetting = {
   fixedExportEnabled: boolean;
   fixedExportDir: string;
   avoidOverwrite: boolean;
+  exportText: boolean;
+  outputStereo: boolean;
+  outputSamplingRate: number;
 };
+
+export type DefaultStyleId = {
+  speakerUuid: string;
+  defaultStyleId: number;
+};
+
+export type HotkeySetting = {
+  action: HotkeyAction;
+  combination: HotkeyCombo;
+};
+
+export type HotkeyAction =
+  | "音声書き出し"
+  | "一つだけ書き出し"
+  | "再生/停止"
+  | "連続再生/停止"
+  | "ｱｸｾﾝﾄ欄を表示"
+  | "ｲﾝﾄﾈｰｼｮﾝ欄を表示"
+  | "長さ欄を表示"
+  | "テキスト欄を追加"
+  | "テキスト欄を削除"
+  | "テキスト欄からフォーカスを外す"
+  | "テキスト欄にフォーカスを戻す"
+  | "元に戻す"
+  | "やり直す"
+  | "新規プロジェクト"
+  | "プロジェクトを名前を付けて保存"
+  | "プロジェクトを上書き保存"
+  | "プロジェクト読み込み"
+  | "テキスト読み込む";
+
+export type HotkeyCombo = string;
+
+export type HotkeyReturnType =
+  | void
+  | boolean
+  | Promise<void>
+  | Promise<boolean>;
+
+export type MoraDataType =
+  | "consonant"
+  | "vowel"
+  | "pitch"
+  | "pause"
+  | "voicing";

@@ -22,7 +22,6 @@
 
       <q-space />
       <q-btn
-        v-if="useUndoRedo"
         unelevated
         color="white"
         text-color="secondary"
@@ -32,7 +31,6 @@
         >元に戻す</q-btn
       >
       <q-btn
-        v-if="useUndoRedo"
         unelevated
         color="white"
         text-color="secondary"
@@ -49,13 +47,13 @@
 import { defineComponent, computed } from "vue";
 import { useStore } from "@/store";
 import { useQuasar } from "quasar";
+import { setHotkeyFunctions } from "@/store/setting";
+import { HotkeyAction, HotkeyReturnType } from "@/type/preload";
 
 export default defineComponent({
   setup() {
     const store = useStore();
     const $q = useQuasar();
-
-    const useUndoRedo = computed(() => store.state.useUndoRedo);
 
     const uiLocked = computed(() => store.getters.UI_LOCKED);
     const canUndo = computed(() => store.getters.CAN_UNDO);
@@ -63,6 +61,48 @@ export default defineComponent({
     const nowPlayingContinuously = computed(
       () => store.state.nowPlayingContinuously
     );
+
+    const undoRedoHotkeyMap = new Map<HotkeyAction, () => HotkeyReturnType>([
+      // undo
+      [
+        "元に戻す",
+        () => {
+          if (!uiLocked.value && canUndo.value) {
+            undo();
+          }
+          return false;
+        },
+      ],
+      // redo
+      [
+        "やり直す",
+        () => {
+          if (!uiLocked.value && canRedo.value) {
+            redo();
+          }
+          return false;
+        },
+      ],
+    ]);
+    setHotkeyFunctions(undoRedoHotkeyMap);
+
+    const hotkeyMap = new Map<HotkeyAction, () => HotkeyReturnType>([
+      // play/stop continuously
+      [
+        "連続再生/停止",
+        () => {
+          if (!uiLocked.value) {
+            if (nowPlayingContinuously.value) {
+              stopContinuously();
+            } else {
+              playContinuously();
+            }
+          }
+        },
+      ],
+    ]);
+
+    setHotkeyFunctions(hotkeyMap);
 
     const undo = () => {
       store.dispatch("UNDO");
@@ -90,7 +130,6 @@ export default defineComponent({
     };
 
     return {
-      useUndoRedo,
       uiLocked,
       canUndo,
       canRedo,

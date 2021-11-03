@@ -8,21 +8,24 @@
     v-model="settingDialogOpenedComputed"
   >
     <q-layout container view="hHh Lpr fFf" class="bg-white">
-      <q-header class="q-pa-sm" elevated>
-        <q-toolbar>
-          <q-toolbar-title class="text-secondary">設定</q-toolbar-title>
-          <q-space />
-          <!-- close button -->
-          <q-btn
-            round
-            flat
-            icon="close"
-            @click="settingDialogOpenedComputed = false"
-          />
-        </q-toolbar>
-      </q-header>
-      <q-page-container>
-        <q-page ref="scroller" class="relative-absolute-wrapper scroller">
+      <q-page-container class="root">
+        <q-header class="q-pa-sm">
+          <q-toolbar>
+            <q-toolbar-title class="text-secondary"
+              >設定 / オプション</q-toolbar-title
+            >
+            <q-space />
+            <!-- close button -->
+            <q-btn
+              round
+              flat
+              icon="close"
+              color="secondary"
+              @click="settingDialogOpenedComputed = false"
+            />
+          </q-toolbar>
+        </q-header>
+        <q-page ref="scroller" class="scroller">
           <div class="q-pa-md row items-start q-gutter-md">
             <!-- Engine Mode Card -->
             <q-card flat class="setting-card">
@@ -39,6 +42,7 @@
                   color="white"
                   text-color="black"
                   toggle-color="primary"
+                  toggle-text-color="secondary"
                   :options="[
                     { label: 'CPU', value: 'switchCPU' },
                     { label: 'GPU', value: 'switchGPU' },
@@ -56,7 +60,30 @@
                 </q-btn-toggle>
               </q-card-actions>
             </q-card>
-
+            <!-- ???Mode -->
+            <q-card flat class="setting-card">
+              <q-card-actions>
+                <div class="text-h5">操作</div>
+              </q-card-actions>
+              <q-card-actions class="q-px-md q-py-sm bg-grey-3">
+                <div>パラメータの引き継ぎ</div>
+                <q-space />
+                <q-toggle
+                  :model-value="inheritAudioInfoMode"
+                  @update:model-value="changeinheritAudioInfo($event)"
+                >
+                  <q-tooltip
+                    :delay="500"
+                    anchor="center left"
+                    self="center right"
+                    transition-show="jump-left"
+                    transition-hide="jump-right"
+                  >
+                    テキスト欄を追加する際、現在の話速等のパラメータを引き継ぎます
+                  </q-tooltip>
+                </q-toggle>
+              </q-card-actions>
+            </q-card>
             <!-- Saving Card -->
             <q-card flat class="setting-card">
               <q-card-actions>
@@ -75,6 +102,7 @@
                   color="white"
                   text-color="black"
                   toggle-color="primary"
+                  toggle-text-color="secondary"
                   :options="[
                     { label: 'UTF-8', value: 'UTF-8' },
                     { label: 'Shift_JIS', value: 'Shift_JIS' },
@@ -179,6 +207,102 @@
                   </q-tooltip>
                 </q-toggle>
               </q-card-actions>
+              <q-card-actions class="q-px-md q-py-none bg-grey-3">
+                <div>txtファイルを書き出し</div>
+                <q-space />
+                <q-toggle
+                  :model-value="savingSetting.exportText"
+                  @update:model-value="
+                    handleSavingSettingChange('exportText', $event)
+                  "
+                >
+                  <q-tooltip
+                    :delay="500"
+                    anchor="center left"
+                    self="center right"
+                    transition-show="jump-left"
+                    transition-hide="jump-right"
+                  >
+                    テキストをtxtファイルとして書き出します
+                  </q-tooltip>
+                </q-toggle>
+              </q-card-actions>
+            </q-card>
+            <q-card flat class="setting-card">
+              <q-card-actions>
+                <div class="text-h5">高度な設定</div>
+              </q-card-actions>
+              <q-card-actions class="q-px-md q-py-none bg-grey-3">
+                <div>音声をステレオ化</div>
+                <q-space />
+                <q-toggle
+                  name="enabled"
+                  align="left"
+                  :model-value="savingSetting.outputStereo"
+                  @update:model-value="
+                    handleSavingSettingChange('outputStereo', $event)
+                  "
+                >
+                  <q-tooltip
+                    :delay="500"
+                    anchor="center left"
+                    self="center right"
+                    transition-show="jump-left"
+                    transition-hide="jump-right"
+                  >
+                    音声データをモノラルからステレオに変換してから再生・保存を行います
+                  </q-tooltip>
+                </q-toggle>
+              </q-card-actions>
+              <q-card-actions class="q-px-md q-py-none bg-grey-3">
+                <div>音声のサンプリングレート</div>
+                <q-space />
+                <q-select
+                  borderless
+                  name="samplingRate"
+                  :model-value="savingSetting.outputSamplingRate"
+                  :options="[24000, 44100, 48000, 88200, 96000]"
+                  :option-label="
+                    (item) =>
+                      `${item / 1000} kHz${
+                        item === 24000 ? '(デフォルト)' : ''
+                      }`
+                  "
+                  @update:model-value="
+                    handleSavingSettingChange('outputSamplingRate', $event)
+                  "
+                >
+                  <q-tooltip
+                    :delay="500"
+                    anchor="center left"
+                    self="center right"
+                    transition-show="jump-left"
+                    transition-hide="jump-right"
+                  >
+                    音声のサンプリングレートを変更して再生・保存しますが、音声の品質は大きく変わりません
+                  </q-tooltip>
+                </q-select>
+              </q-card-actions>
+            </q-card>
+            <q-card flat class="setting-card">
+              <q-card-actions>
+                <div class="text-h5">実験的機能</div>
+              </q-card-actions>
+              <q-card-actions class="q-px-md q-py-sm bg-grey-3">
+                <div>無声化切り替え</div>
+                <q-space />
+                <q-toggle v-model="useVoicingComputed">
+                  <q-tooltip
+                    :delay="500"
+                    anchor="center left"
+                    self="center right"
+                    transition-show="jump-left"
+                    transition-hide="jump-right"
+                  >
+                    この機能を有効にすると、元に戻す・やり直す機能が正しく動作しなくなる可能性があります
+                  </q-tooltip>
+                </q-toggle>
+              </q-card-actions>
             </q-card>
           </div>
         </q-page>
@@ -188,9 +312,10 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, computed, onUpdated } from "vue";
+import { defineComponent, computed } from "vue";
 import { useStore } from "@/store";
 import { useQuasar } from "quasar";
+import { SavingSetting } from "@/type/preload";
 
 export default defineComponent({
   name: "SettingDialog",
@@ -215,6 +340,14 @@ export default defineComponent({
       get: () => (store.state.useGpu ? "switchGPU" : "switchCPU"),
       set: (mode: string) => {
         changeUseGPU(mode == "switchGPU" ? true : false);
+      },
+    });
+    const inheritAudioInfoMode = computed(() => store.state.inheritAudioInfo);
+
+    const useVoicingComputed = computed({
+      get: () => store.state.useVoicing,
+      set: (useVoicing: boolean) => {
+        store.dispatch("SET_USE_VOICING", { data: useVoicing });
       },
     });
 
@@ -277,16 +410,47 @@ export default defineComponent({
       } else change();
     };
 
+    const changeinheritAudioInfo = async (inheritAudioInfo: boolean) => {
+      if (store.state.inheritAudioInfo === inheritAudioInfo) return;
+      store.dispatch("SET_INHERIT_AUDIOINFO", { inheritAudioInfo });
+    };
+
     const restartEngineProcess = () => {
       store.dispatch("RESTART_ENGINE");
     };
 
     const savingSetting = computed(() => store.state.savingSetting);
 
-    const handleSavingSettingChange = (key: string, data: string | boolean) => {
-      store.dispatch("SET_SAVING_SETTING_DATA", {
-        data: { ...savingSetting.value, [key]: data },
-      });
+    const handleSavingSettingChange = (
+      key: keyof SavingSetting,
+      data: string | boolean | number
+    ) => {
+      const storeDispatch = (): void => {
+        store.dispatch("SET_SAVING_SETTING", {
+          data: { ...savingSetting.value, [key]: data },
+        });
+      };
+      if (key === "outputSamplingRate" && data !== 24000) {
+        $q.dialog({
+          title: "出力サンプリングレートを変更します",
+          message:
+            "出力サンプリングレートを変更しても、音質は変化しません。また、音声の生成処理に若干時間がかかる場合があります。<br />本当に変更しますか？",
+          html: true,
+          persistent: true,
+          ok: {
+            label: "変更する",
+            flat: true,
+            textColor: "secondary",
+          },
+          cancel: {
+            label: "変更しない",
+            flat: true,
+            textColor: "secondary",
+          },
+        }).onOk(storeDispatch);
+        return;
+      }
+      storeDispatch();
     };
 
     const openFileExplore = async () => {
@@ -294,23 +458,22 @@ export default defineComponent({
         title: "書き出し先のフォルダを選択",
       });
       if (path) {
-        store.dispatch("SET_SAVING_SETTING_DATA", {
+        store.dispatch("SET_SAVING_SETTING", {
           data: { ...savingSetting.value, fixedExportDir: path },
         });
       }
     };
 
-    onUpdated(() => {
-      store.dispatch("GET_SAVING_SETTING_DATA");
-    });
-
     return {
       settingDialogOpenedComputed,
       engineMode,
+      inheritAudioInfoMode,
+      changeinheritAudioInfo,
       restartEngineProcess,
       savingSetting,
       handleSavingSettingChange,
       openFileExplore,
+      useVoicingComputed,
     };
   },
 });
@@ -320,7 +483,33 @@ export default defineComponent({
 @use '@/styles' as global;
 @import "~quasar/src/css/variables";
 
-.setting-card {
+.hotkey-table {
   width: 100%;
+}
+
+.setting-card {
+  @extend .hotkey-table;
+  min-width: 475px;
+}
+
+.setting-dialog .q-layout-container :deep(.absolute-full) {
+  right: 0 !important;
+  .scroll {
+    left: unset !important;
+    right: unset !important;
+    width: unset !important;
+    max-height: unset;
+  }
+}
+
+.root {
+  .scroller {
+    overflow-y: scroll;
+    > div {
+      position: absolute;
+      left: 0;
+      right: 0;
+    }
+  }
 }
 </style>

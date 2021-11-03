@@ -6,6 +6,7 @@ import {
   UiActions,
   UiGetters,
   UiMutations,
+  UiStoreState,
   VoiceVoxStoreOptions,
 } from "./type";
 
@@ -13,7 +14,7 @@ export function createUILockAction<S, A extends ActionsBase, K extends keyof A>(
   action: (
     context: ActionContext<S, S, AllGetters, AllActions, AllMutations>,
     payload: Parameters<A[K]>[0]
-  ) => ReturnType<A[K]> extends Promise<any>
+  ) => ReturnType<A[K]> extends Promise<unknown>
     ? ReturnType<A[K]>
     : Promise<ReturnType<A[K]>>
 ): Action<S, S, A, K, AllGetters, AllActions, AllMutations> {
@@ -24,6 +25,18 @@ export function createUILockAction<S, A extends ActionsBase, K extends keyof A>(
     });
   };
 }
+
+export const uiStoreState: UiStoreState = {
+  uiLockCount: 0,
+  useGpu: false,
+  inheritAudioInfo: true,
+  isHelpDialogOpen: false,
+  isSettingDialogOpen: false,
+  isHotkeySettingDialogOpen: false,
+  isDefaultStyleSelectDialogOpen: false,
+  isMaximized: false,
+  isPinned: false,
+};
 
 export const uiStore: VoiceVoxStoreOptions<UiGetters, UiActions, UiMutations> =
   {
@@ -55,8 +68,25 @@ export const uiStore: VoiceVoxStoreOptions<UiGetters, UiActions, UiMutations> =
       ) {
         state.isSettingDialogOpen = isSettingDialogOpen;
       },
+      IS_HOTKEY_SETTING_DIALOG_OPEN(state, { isHotkeySettingDialogOpen }) {
+        state.isHotkeySettingDialogOpen = isHotkeySettingDialogOpen;
+      },
+      IS_DEFAULT_STYLE_SELECT_DIALOG_OPEN(
+        state,
+        {
+          isDefaultStyleSelectDialogOpen,
+        }: { isDefaultStyleSelectDialogOpen: boolean }
+      ) {
+        state.isDefaultStyleSelectDialogOpen = isDefaultStyleSelectDialogOpen;
+      },
       SET_USE_GPU(state, { useGpu }: { useGpu: boolean }) {
         state.useGpu = useGpu;
+      },
+      SET_INHERIT_AUDIOINFO(
+        state,
+        { inheritAudioInfo }: { inheritAudioInfo: boolean }
+      ) {
+        state.inheritAudioInfo = inheritAudioInfo;
       },
       DETECT_UNMAXIMIZED(state) {
         state.isMaximized = false;
@@ -106,6 +136,35 @@ export const uiStore: VoiceVoxStoreOptions<UiGetters, UiActions, UiMutations> =
 
         commit("IS_SETTING_DIALOG_OPEN", { isSettingDialogOpen });
       },
+      IS_HOTKEY_SETTING_DIALOG_OPEN(
+        { state, commit },
+        { isHotkeySettingDialogOpen }
+      ) {
+        if (state.isHotkeySettingDialogOpen === isHotkeySettingDialogOpen)
+          return;
+
+        if (isHotkeySettingDialogOpen) commit("LOCK_UI");
+        else commit("UNLOCK_UI");
+
+        commit("IS_HOTKEY_SETTING_DIALOG_OPEN", { isHotkeySettingDialogOpen });
+      },
+      async IS_DEFAULT_STYLE_SELECT_DIALOG_OPEN(
+        { state, commit },
+        { isDefaultStyleSelectDialogOpen }
+      ) {
+        if (
+          state.isDefaultStyleSelectDialogOpen ===
+          isDefaultStyleSelectDialogOpen
+        )
+          return;
+
+        if (isDefaultStyleSelectDialogOpen) commit("LOCK_UI");
+        else commit("UNLOCK_UI");
+
+        commit("IS_DEFAULT_STYLE_SELECT_DIALOG_OPEN", {
+          isDefaultStyleSelectDialogOpen,
+        });
+      },
       async GET_USE_GPU({ commit }) {
         commit("SET_USE_GPU", {
           useGpu: await window.electron.useGpu(),
@@ -114,6 +173,21 @@ export const uiStore: VoiceVoxStoreOptions<UiGetters, UiActions, UiMutations> =
       async SET_USE_GPU({ commit }, { useGpu }: { useGpu: boolean }) {
         commit("SET_USE_GPU", {
           useGpu: await window.electron.useGpu(useGpu),
+        });
+      },
+      async GET_INHERIT_AUDIOINFO({ commit }) {
+        commit("SET_INHERIT_AUDIOINFO", {
+          inheritAudioInfo: await window.electron.inheritAudioInfo(),
+        });
+      },
+      async SET_INHERIT_AUDIOINFO(
+        { commit },
+        { inheritAudioInfo }: { inheritAudioInfo: boolean }
+      ) {
+        commit("SET_INHERIT_AUDIOINFO", {
+          inheritAudioInfo: await window.electron.inheritAudioInfo(
+            inheritAudioInfo
+          ),
         });
       },
       async DETECT_UNMAXIMIZED({ commit }) {

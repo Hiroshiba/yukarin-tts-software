@@ -17,6 +17,11 @@ type IpcIHData = {
     return: import("@/type/preload").CharacterInfo[];
   };
 
+  GET_HOW_TO_USE_TEXT: {
+    args: [];
+    return: string;
+  };
+
   GET_POLICY_TEXT: {
     args: [];
     return: string;
@@ -30,6 +35,11 @@ type IpcIHData = {
   GET_UPDATE_INFOS: {
     args: [];
     return: import("@/type/preload").UpdateInfo[];
+  };
+
+  GET_OSS_COMMUNITY_INFOS: {
+    args: [];
+    return: string;
   };
 
   SHOW_AUDIO_SAVE_DIALOG: {
@@ -82,6 +92,11 @@ type IpcIHData = {
     return: boolean;
   };
 
+  INHERIT_AUDIOINFO: {
+    args: [obj: { newValue?: boolean }];
+    return: boolean;
+  };
+
   IS_AVAILABLE_GPU_MODE: {
     args: [];
     return: boolean;
@@ -130,6 +145,31 @@ type IpcIHData = {
   CHANGE_PIN_WINDOW: {
     args: [];
     return: void;
+  };
+
+  HOTKEY_SETTINGS: {
+    args: [obj: { newData?: import("@/type/preload").HotkeySetting }];
+    return: import("@/type/preload").HotkeySetting[];
+  };
+
+  IS_UNSET_DEFAULT_STYLE_IDS: {
+    args: [];
+    return: boolean;
+  };
+
+  GET_DEFAULT_STYLE_IDS: {
+    args: [];
+    return: import("@/type/preload").DefaultStyleId[];
+  };
+
+  SET_DEFAULT_STYLE_IDS: {
+    args: [defaultStyleIds: { speakerUuid: string; defaultStyleId: number }[]];
+    return: void;
+  };
+
+  USE_VOICING: {
+    args: [obj: { newData?: boolean }];
+    return: boolean;
   };
 };
 

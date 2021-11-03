@@ -1,17 +1,29 @@
 import { toRaw } from "vue";
-import { enablePatches, enableMapSet, Patch, Immer } from "immer";
-import { applyPatch, Operation } from "rfc6902";
+import { enablePatches, enableMapSet, Immer } from "immer";
+// immerの内部関数であるgetPlugin("Patches").applyPatches_はexportされていないので
+// ビルド前のsrcからソースコードを読み込んで使う必要がある
+import { enablePatches as enablePatchesImpl } from "immer/src/plugins/patches";
+import { enableMapSet as enableMapSetImpl } from "immer/src/plugins/mapset";
+import { getPlugin } from "immer/src/utils/plugins";
+
 import {
   Command,
-  CommandGetters,
   CommandActions,
+  CommandGetters,
   CommandMutations,
+  CommandStoreState,
   VoiceVoxStoreOptions,
 } from "./type";
 import { Mutation, MutationsBase, MutationTree } from "@/store/vuex";
 
+// ビルド後のモジュールとビルド前のモジュールは別のスコープで変数を持っているので
+// enable * も両方叩く必要がある。
 enablePatches();
 enableMapSet();
+enablePatchesImpl();
+enableMapSetImpl();
+// immerのPatchをmutableに適応する内部関数
+const applyPatchesImpl = getPlugin("Patches").applyPatches_;
 
 const immer = new Immer();
 immer.setAutoFreeze(false);
@@ -20,14 +32,10 @@ export type PayloadRecipe<S, P> = (draft: S, payload: P) => void;
 export type PayloadRecipeTree<S, M> = {
   [K in keyof M]: PayloadRecipe<S, M[K]>;
 };
-export type PayloadMutation<S, P extends Record<string, unknown> | undefined> =
-  (state: S, payload: P) => void;
-export type PayloadMutationTree<S> = Record<string, PayloadMutation<S, any>>;
 
 interface UndoRedoState {
   undoCommands: Command[];
   redoCommands: Command[];
-  useUndoRedo: boolean;
 }
 
 /**
@@ -58,39 +66,34 @@ export const createCommandMutation =
     payloadRecipe: PayloadRecipe<S, P>
   ): Mutation<S, P> =>
   (state: S, payload: P): void => {
-    if (state.useUndoRedo) {
-      const command = recordOperations(payloadRecipe)(state, payload);
-      applyPatch(state, command.redoOperations);
-      state.undoCommands.push(command);
-      state.redoCommands.splice(0);
-    } else {
-      payloadRecipe(state, payload);
-    }
+    const command = recordPatches(payloadRecipe)(state, payload);
+    applyPatchesImpl(state, command.redoPatches);
+    state.undoCommands.push(command);
+    state.redoCommands.splice(0);
   };
-
-const patchToOperation = (patch: Patch): Operation => ({
-  op: patch.op,
-  path: `/${patch.path.join("/")}`,
-  value: patch.value,
-});
 
 /**
  * @param recipe - 操作を記録したいレシピ関数
  * @returns Function - レシピの操作を与えられたstateとpayloadを用いて記録したコマンドを返す関数。
  */
-const recordOperations =
+const recordPatches =
   <S, P>(recipe: PayloadRecipe<S, P>) =>
   (state: S, payload: P): Command => {
-    const [_, doPatches, undoPatches] = immer.produceWithPatches(
+    const [, doPatches, undoPatches] = immer.produceWithPatches(
       toRaw(state) as S,
       (draft: S) => recipe(draft, payload)
     );
     return {
       unixMillisec: new Date().getTime(),
-      redoOperations: doPatches.map(patchToOperation),
-      undoOperations: undoPatches.map(patchToOperation),
+      redoPatches: doPatches,
+      undoPatches: undoPatches,
     };
   };
+
+export const commandStoreState: CommandStoreState = {
+  undoCommands: [],
+  redoCommands: [],
+};
 
 export const commandStore: VoiceVoxStoreOptions<
   CommandGetters,
@@ -118,14 +121,14 @@ export const commandStore: VoiceVoxStoreOptions<
       const command = state.undoCommands.pop();
       if (command != null) {
         state.redoCommands.push(command);
-        applyPatch(state, command.undoOperations);
+        applyPatchesImpl(state, command.undoPatches);
       }
     },
     REDO(state) {
       const command = state.redoCommands.pop();
       if (command != null) {
         state.undoCommands.push(command);
-        applyPatch(state, command.redoOperations);
+        applyPatchesImpl(state, command.redoPatches);
       }
     },
     CLEAR_COMMANDS(state) {
